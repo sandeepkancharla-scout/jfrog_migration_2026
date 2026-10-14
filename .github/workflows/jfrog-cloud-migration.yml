@@ -87,6 +87,7 @@ jobs:
             "${{ github.event.inputs.source_repo }}/${{ github.event.inputs.path_filter }}" `
             "migration/" `
             --flat=false `
+            --recursive=true`
             --server-id=source
 
       - name: Show Downloaded Files
