@@ -3,23 +3,13 @@ name: JFrog Migration
 on:
   workflow_dispatch:
     inputs:
-      source_path:
-        description: "Full Source Artifactory Path"
-        required: true
-        type: string
-
-      source_repo:        
-        description: "Full Source Artifactory Repository"
-        required: true
-        type: string
-
-      source_folder:
-        description: "Full Source folder Path"
+      source_url:
+        description: "Full RVT Artifactory URL"
         required: true
         type: string
 
       target_repo:
-        description: "Target Repository"
+        description: "Target Scout Repository"
         required: true
         type: string
 
@@ -28,14 +18,16 @@ jobs:
     runs-on: [self-hosted, Windows]
 
     steps:
+
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v4
 
-      - name: Remove Existing Configs
+      - name: Cleanup Existing Configs
         shell: pwsh
+        continue-on-error: true
         run: |
-          jf c rm source --quiet
-          jf c rm scout-artifactory --quiet
+          jf c rm source
+          jf c rm scout-artifactory
 
       - name: Configure Source
         shell: pwsh
@@ -43,7 +35,8 @@ jobs:
           jf c add source `
             --url="${{ secrets.SOURCE_URL }}" `
             --access-token="${{ secrets.SOURCE_ACCESS_TOKEN }}" `
-            --interactive=false
+            --interactive=false `
+            --overwrite=true
 
       - name: Configure Target
         shell: pwsh
@@ -51,54 +44,92 @@ jobs:
           jf c add scout-artifactory `
             --url="${{ secrets.TARGET_URL }}" `
             --access-token="${{ secrets.TARGET_ACCESS_TOKEN }}" `
-            --interactive=false
+            --interactive=false `
+            --overwrite=true
 
-      - name: Clean Temp Folder
+      - name: Verify Source Connection
+        shell: pwsh
+        run: |
+          jf rt ping --server-id=source
+
+      - name: Verify Target Connection
+        shell: pwsh
+        run: |
+          jf rt ping --server-id=scout-artifactory
+
+      - name: Clean Working Folder
         shell: pwsh
         run: |
           if (Test-Path "C:\Temp\Artifacts") {
-            Remove-Item "C:\Temp\Artifacts" -Recurse -Force
+              Remove-Item "C:\Temp\Artifacts" -Recurse -Force
           }
 
-          New-Item -ItemType Directory `
+          New-Item `
+            -ItemType Directory `
             -Path "C:\Temp\Artifacts" `
             -Force
+
+      - name: Parse Source URL
+        shell: pwsh
+        run: |
+          $url = "${{ github.event.inputs.source_url }}"
+
+          $artifactPath = $url.Replace(
+            "https://jfrog.rivianvw.io/artifactory/",
+            ""
+          )
+
+          $artifactPath = $artifactPath.TrimEnd('/')
+
+          $searchPattern = "$artifactPath/**"
+
+          Write-Host "Artifact Path:"
+          Write-Host $artifactPath
+
+          Write-Host "Search Pattern:"
+          Write-Host $searchPattern
+
+          $searchPattern | Out-File `
+            "$env:RUNNER_TEMP\artifactPath.txt"
 
       - name: Search Source Files
         shell: pwsh
         run: |
+          $searchPattern = Get-Content `
+            "$env:RUNNER_TEMP\artifactPath.txt"
+
           jf rt s `
-            "${{ github.event.inputs.source_repo }}/${{ github.event.inputs.source_folder }}/**" `
+            "$searchPattern" `
             --server-id=source
-            
+
       - name: Download Files
         shell: pwsh
         run: |
+          $searchPattern = Get-Content `
+            "$env:RUNNER_TEMP\artifactPath.txt"
+
           jf rt dl `
-            "${{ github.event.inputs.source_path }}" `
+            "$searchPattern" `
             "C:\Temp\Artifacts\" `
-            --include-dirs=true `
+            --flat=false `
             --recursive=true `
+            --include-dirs=true `
             --server-id=source
 
       - name: Show Downloaded Files
         shell: pwsh
         run: |
-          Get-ChildItem "C:\Temp\Artifacts" -Recurse
+          Write-Host "Downloaded Files:"
 
-      - name: Debug Repository Root
-        shell: pwsh
-        run: |
-          jf rt s "vw-build-binaries/*" --server-id=source
-
+          Get-ChildItem `
+            "C:\Temp\Artifacts" `
+            -Recurse
 
       - name: Upload Files
         shell: pwsh
         run: |
-          Set-Location "C:\Temp\Artifacts"
-
-          jf rt upload `
-            "./*" `
+          jf rt u `
+            "C:\Temp\Artifacts\**" `
             "${{ github.event.inputs.target_repo }}/" `
             --flat=false `
             --recursive=true `
@@ -108,5 +139,5 @@ jobs:
         shell: pwsh
         run: |
           jf rt s `
-            "${{ github.event.inputs.target_repo }}/*" `
+            "${{ github.event.inputs.target_repo }}/**" `
             --server-id=scout-artifactory
