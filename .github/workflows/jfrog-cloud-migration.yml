@@ -4,41 +4,49 @@ on:
   workflow_dispatch:
     inputs:
       source_url:
-        description: Source JFrog URL
+        description: "Source JFrog URL"
         required: true
         type: string
 
       source_repo:
-        description: Source Repository
+        description: "Source Repository"
         required: true
         type: string
 
       path_filter:
-        description: Path to migrate
+        description: "Path inside repository"
         required: true
         type: string
 
       target_url:
-        description: Target JFrog URL
+        description: "Target JFrog URL"
         required: true
         type: string
 
       target_repo:
-        description: Target Repository
+        description: "Target Repository"
         required: true
         type: string
 
 jobs:
   migrate:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Windows]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: jfrog/setup-jfrog-cli@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+
+      - name: Cleanup Existing Configs
+        shell: pwsh
+        run: |
+          jf c rm source --quiet
+          jf c rm target --quiet
 
       - name: Configure Source
-        shell: pwsh 
+        shell: pwsh
         run: |
           jf c add source `
             --url="${{ github.event.inputs.source_url }}" `
@@ -54,28 +62,51 @@ jobs:
             --interactive=false
 
       - name: Ping Source
-        run: jf rt ping --server-id=source
+        shell: pwsh
+        run: |
+          jf rt ping --server-id=source
 
       - name: Ping Target
-        run: jf rt ping --server-id=target
+        shell: pwsh
+        run: |
+          jf rt ping --server-id=target
 
-      - name: Create Folder
-        run: mkdir migration
+      - name: Create Working Directory
+        shell: pwsh
+        run: |
+          if (Test-Path migration) {
+              Remove-Item migration -Recurse -Force
+          }
 
-      - name: Download
+          New-Item -ItemType Directory -Path migration
+
+      - name: Download From Source
         shell: pwsh
         run: |
           jf rt dl `
             "${{ github.event.inputs.source_repo }}/${{ github.event.inputs.path_filter }}" `
-            migration/ `
+            "migration/" `
             --flat=false `
             --server-id=source
 
-      - name: Upload
+      - name: Show Downloaded Files
+        shell: pwsh
+        run: |
+          Get-ChildItem migration -Recurse
+
+      - name: Upload To Target
+        shell: pwsh
         run: |
           jf rt u `
-            "migration/**" `
+            "migration/**/*" `
             "${{ github.event.inputs.target_repo }}/" `
-            --flat=false `
             --recursive=true `
+            --flat=false `
+            --server-id=target
+
+      - name: Search Uploaded Files
+        shell: pwsh
+        run: |
+          jf rt s `
+            "${{ github.event.inputs.target_repo }}/*" `
             --server-id=target
