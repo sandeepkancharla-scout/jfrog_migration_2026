@@ -38,17 +38,19 @@ jobs:
       - uses: jfrog/setup-jfrog-cli@v4
 
       - name: Configure Source
+        shell: pwsh 
         run: |
-          jf c add source \
-            --url="${{ github.event.inputs.source_url }}" \
-            --access-token="${{ secrets.SOURCE_ACCESS_TOKEN }}" \
+          jf c add source `
+            --url="${{ github.event.inputs.source_url }}" `
+            --access-token="${{ secrets.SOURCE_ACCESS_TOKEN }}" `
             --interactive=false
 
       - name: Configure Target
+        shell: pwsh
         run: |
-          jf c add target \
-            --url="${{ github.event.inputs.target_url }}" \
-            --access-token="${{ secrets.TARGET_ACCESS_TOKEN }}" \
+          jf c add target `
+            --url="${{ github.event.inputs.target_url }}" `
+            --access-token="${{ secrets.TARGET_ACCESS_TOKEN }}" `
             --interactive=false
 
       - name: Ping Source
