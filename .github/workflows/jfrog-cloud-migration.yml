@@ -1,25 +1,10 @@
-name: JFrog Cloud Migration
+name: JFrog Migration
 
 on:
   workflow_dispatch:
     inputs:
-      source_url:
-        description: "Source JFrog URL"
-        required: true
-        type: string
-
-      source_repo:
-        description: "Source Repository"
-        required: true
-        type: string
-
-      path_filter:
-        description: "Path inside repository"
-        required: true
-        type: string
-
-      target_url:
-        description: "Target JFrog URL"
+      source_path:
+        description: "Full Source Artifactory Path"
         required: true
         type: string
 
@@ -33,81 +18,79 @@ jobs:
     runs-on: [self-hosted, Windows]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v4
 
-      - name: Cleanup Existing Configs
+      - name: Remove Existing Configs
         shell: pwsh
         run: |
           jf c rm source --quiet
-          jf c rm target --quiet
+          jf c rm scout-artifactory --quiet
 
       - name: Configure Source
         shell: pwsh
         run: |
           jf c add source `
-            --url="${{ github.event.inputs.source_url }}" `
+            --url="${{ secrets.SOURCE_URL }}" `
             --access-token="${{ secrets.SOURCE_ACCESS_TOKEN }}" `
             --interactive=false
 
       - name: Configure Target
         shell: pwsh
         run: |
-          jf c add target `
-            --url="${{ github.event.inputs.target_url }}" `
+          jf c add scout-artifactory `
+            --url="${{ secrets.TARGET_URL }}" `
             --access-token="${{ secrets.TARGET_ACCESS_TOKEN }}" `
             --interactive=false
 
-      - name: Ping Source
+      - name: Clean Temp Folder
         shell: pwsh
         run: |
-          jf rt ping --server-id=source
-
-      - name: Ping Target
-        shell: pwsh
-        run: |
-          jf rt ping --server-id=target
-
-      - name: Create Working Directory
-        shell: pwsh
-        run: |
-          if (Test-Path migration) {
-              Remove-Item migration -Recurse -Force
+          if (Test-Path "C:\Temp\Artifacts") {
+            Remove-Item "C:\Temp\Artifacts" -Recurse -Force
           }
 
-          New-Item -ItemType Directory -Path migration
+          New-Item -ItemType Directory `
+            -Path "C:\Temp\Artifacts" `
+            -Force
 
-      - name: Download From Source
+      - name: Search Source Files
+        shell: pwsh
+        run: |
+          jf rt s `
+            "${{ github.event.inputs.source_path }}" `
+            --server-id=source
+
+      - name: Download Files
         shell: pwsh
         run: |
           jf rt dl `
-            "${{ github.event.inputs.source_repo }}/${{ github.event.inputs.path_filter }}" `
-            "migration/" `
-            --flat=false `
+            "${{ github.event.inputs.source_path }}" `
+            "C:\Temp\Artifacts\" `
+            --include-dirs=true `
             --recursive=true `
             --server-id=source
 
       - name: Show Downloaded Files
         shell: pwsh
         run: |
-          Get-ChildItem migration -Recurse
+          Get-ChildItem "C:\Temp\Artifacts" -Recurse
 
-      - name: Upload To Target
+      - name: Upload Files
         shell: pwsh
         run: |
-          jf rt u `
-            "migration/**/*" `
-            "${{ github.event.inputs.target_repo }}/" `
-            --recursive=true `
-            --flat=false `
-            --server-id=target
+          Set-Location "C:\Temp\Artifacts"
 
-      - name: Search Uploaded Files
+          jf rt upload `
+            "./*" `
+            "${{ github.event.inputs.target_repo }}/" `
+            --flat=false `
+            --recursive=true `
+            --server-id=scout-artifactory
+
+      - name: Verify Upload
         shell: pwsh
         run: |
           jf rt s `
             "${{ github.event.inputs.target_repo }}/*" `
-            --server-id=target
+            --server-id=scout-artifactory
