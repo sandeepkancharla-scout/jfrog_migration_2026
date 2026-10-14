@@ -63,18 +63,19 @@ jobs:
         run: mkdir migration
 
       - name: Download
+        shell: pwsh
         run: |
-          jf rt dl \
-            "${{ github.event.inputs.source_repo }}/${{ github.event.inputs.path_filter }}" \
-            migration/ \
-            --flat=false \
+          jf rt dl `
+            "${{ github.event.inputs.source_repo }}/${{ github.event.inputs.path_filter }}" `
+            migration/ `
+            --flat=false `
             --server-id=source
 
       - name: Upload
         run: |
-          jf rt u \
-            "migration/**" \
-            "${{ github.event.inputs.target_repo }}/" \
-            --flat=false \
-            --recursive=true \
+          jf rt u `
+            "migration/**" `
+            "${{ github.event.inputs.target_repo }}/" `
+            --flat=false `
+            --recursive=true `
             --server-id=target
