@@ -1,0 +1,63 @@
+name: JFrog Cloud Migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "Source JFrog URL"
+        required: true
+
+      source_repo:
+        description: "Source Repository"
+        required: true
+
+      target_url:
+        description: "Target JFrog URL"
+        required: true
+
+      target_repo:
+        description: "Target Repository"
+        required: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+
+      - name: Configure Source Artifactory
+        run: |
+          jf c add source \
+            --url="${{ github.event.inputs.source_url }}" \
+            --access-token="${{ secrets.SOURCE_ACCESS_TOKEN }}" \
+            --interactive=false
+
+      - name: Configure Target Artifactory
+        run: |
+          jf c add target \
+            --url="${{ github.event.inputs.target_url }}" \
+            --access-token="${{ secrets.TARGET_ACCESS_TOKEN }}" \
+            --interactive=false
+
+      - name: Download Repo
+        run: |
+          mkdir migration
+
+          jf rt dl \
+          "${{ github.event.inputs.source_repo }}/**" \
+          migration/ \
+          --flat=false \
+          --server-id=source
+
+      - name: Upload Repo
+        run: |
+          jf rt u \
+          "migration/**" \
+          "${{ github.event.inputs.target_repo }}/" \
+          --recursive=true \
+          --flat=false \
+          --server-id=target
