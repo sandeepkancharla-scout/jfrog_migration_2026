@@ -8,6 +8,16 @@ on:
         required: true
         type: string
 
+      source_repo:        
+        description: "Full Source Artifactory Repository"
+        required: true
+        type: string
+
+      source_folder:
+        description: "Full Source folder Path"
+        required: true
+        type: string
+
       target_repo:
         description: "Target Repository"
         required: true
@@ -58,9 +68,9 @@ jobs:
         shell: pwsh
         run: |
           jf rt s `
-            "${{ github.event.inputs.source_path }}" `
+            "${{ github.event.inputs.source_repo }}/${{ github.event.inputs.source_folder }}/**" `
             --server-id=source
-
+            
       - name: Download Files
         shell: pwsh
         run: |
@@ -75,6 +85,12 @@ jobs:
         shell: pwsh
         run: |
           Get-ChildItem "C:\Temp\Artifacts" -Recurse
+
+      - name: Debug Repository Root
+        shell: pwsh
+        run: |
+          jf rt s "vw-build-binaries/*" --server-id=source
+
 
       - name: Upload Files
         shell: pwsh
