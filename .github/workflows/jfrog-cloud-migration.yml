@@ -135,8 +135,10 @@ jobs:
       - name: Upload Files
         shell: pwsh
         run: |
-          jf rt u `
-            "C:\Temp\Artifacts\**" `
+          Set-Location "C:\Temp\Artifacts"
+          
+          jf rt upload `
+            "./*" `
             "${{ github.event.inputs.target_repo }}/" `
             --flat=false `
             --recursive=true `
