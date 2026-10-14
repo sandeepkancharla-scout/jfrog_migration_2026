@@ -51,6 +51,13 @@ jobs:
         shell: pwsh
         run: |
           jf rt ping --server-id=source
+          
+      - name: Verify Target DNS
+        shell: pwsh
+        run: |
+            Write-Host "Checking Scout DNS..."
+            nslookup artifactory.sctmtrs.xyz
+          
 
       - name: Verify Target Connection
         shell: pwsh
@@ -123,7 +130,7 @@ jobs:
 
           Get-ChildItem `
             "C:\Temp\Artifacts" `
-            -Recurse
+            -Recurse -File
 
       - name: Upload Files
         shell: pwsh
