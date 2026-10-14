@@ -4,20 +4,29 @@ on:
   workflow_dispatch:
     inputs:
       source_url:
-        description: "Source JFrog URL"
+        description: Source JFrog URL
         required: true
+        type: string
 
       source_repo:
-        description: "Source Repository"
+        description: Source Repository
         required: true
+        type: string
+
+      path_filter:
+        description: Path to migrate
+        required: true
+        type: string
 
       target_url:
-        description: "Target JFrog URL"
+        description: Target JFrog URL
         required: true
+        type: string
 
       target_repo:
-        description: "Target Repository"
+        description: Target Repository
         required: true
+        type: string
 
 jobs:
   migrate:
@@ -26,38 +35,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v4
+      - uses: jfrog/setup-jfrog-cli@v4
 
-      - name: Configure Source Artifactory
+      - name: Configure Source
         run: |
           jf c add source \
             --url="${{ github.event.inputs.source_url }}" \
             --access-token="${{ secrets.SOURCE_ACCESS_TOKEN }}" \
             --interactive=false
 
-      - name: Configure Target Artifactory
+      - name: Configure Target
         run: |
           jf c add target \
             --url="${{ github.event.inputs.target_url }}" \
             --access-token="${{ secrets.TARGET_ACCESS_TOKEN }}" \
             --interactive=false
 
-      - name: Download Repo
+      - name: Ping Source
+        run: jf rt ping --server-id=source
+
+      - name: Ping Target
+        run: jf rt ping --server-id=target
+
+      - name: Create Folder
+        run: mkdir migration
+
+      - name: Download
         run: |
-          mkdir migration
-
           jf rt dl \
-          "${{ github.event.inputs.source_repo }}/**" \
-          migration/ \
-          --flat=false \
-          --server-id=source
+            "${{ github.event.inputs.source_repo }}/${{ github.event.inputs.path_filter }}" \
+            migration/ \
+            --flat=false \
+            --server-id=source
 
-      - name: Upload Repo
+      - name: Upload
         run: |
           jf rt u \
-          "migration/**" \
-          "${{ github.event.inputs.target_repo }}/" \
-          --recursive=true \
-          --flat=false \
-          --server-id=target
+            "migration/**" \
+            "${{ github.event.inputs.target_repo }}/" \
+            --flat=false \
+            --recursive=true \
+            --server-id=target
