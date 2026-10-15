@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from pathlib import Path
 
 import requests
@@ -14,11 +15,13 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_FILE = BASE_DIR / "approvals.json"
 
 FINAL_WORKFLOW = "final-deploy.yml"
-GITHUB_REF = "main"
+DEFAULT_GITHUB_REF = "main"
+
+DB_LOCK = threading.Lock()
 
 
 # ============================================================
-# DATABASE
+# DATABASE FUNCTIONS
 # ============================================================
 
 def load_db():
@@ -26,8 +29,9 @@ def load_db():
         return {}
 
     try:
-        with open(DB_FILE, "r", encoding="utf-8") as file:
-            return json.load(file)
+        with DB_LOCK:
+            with open(DB_FILE, "r", encoding="utf-8") as file:
+                return json.load(file)
 
     except json.JSONDecodeError:
         st.error("approvals.json contains invalid JSON.")
@@ -35,21 +39,21 @@ def load_db():
 
 
 def save_db(data):
-    """
-    Write through a temporary file so that approvals.json
-    is not left partially written.
-    """
-
     temp_file = DB_FILE.with_suffix(".tmp")
 
-    with open(temp_file, "w", encoding="utf-8") as file:
-        json.dump(data, file, indent=2)
+    with DB_LOCK:
+        with open(temp_file, "w", encoding="utf-8") as file:
+            json.dump(
+                data,
+                file,
+                indent=2
+            )
 
-    temp_file.replace(DB_FILE)
+        temp_file.replace(DB_FILE)
 
 
 # ============================================================
-# APPROVAL STATUS
+# STATUS LOGIC
 # ============================================================
 
 def update_overall_status(record):
@@ -57,19 +61,23 @@ def update_overall_status(record):
 
     statuses = list(approvals.values())
 
-    # One rejection blocks deployment.
+    # If anybody rejects, deployment is rejected.
     if "REJECTED" in statuses:
         record["status"] = "REJECTED"
+        return
 
     # Everyone must approve.
-    elif statuses and all(
-        status == "APPROVED"
-        for status in statuses
+    if (
+        statuses
+        and all(
+            status == "APPROVED"
+            for status in statuses
+        )
     ):
         record["status"] = "APPROVED"
+        return
 
-    else:
-        record["status"] = "PENDING"
+    record["status"] = "PENDING"
 
 
 # ============================================================
@@ -77,13 +85,6 @@ def update_overall_status(record):
 # ============================================================
 
 def get_github_configuration():
-    """
-    Uses the exact variable names you created:
-
-        GH_TOKEN
-        GH_OWNER
-        GH_REPO
-    """
 
     github_token = os.getenv("GH_TOKEN")
     github_owner = os.getenv("GH_OWNER")
@@ -114,15 +115,21 @@ def get_github_configuration():
 
 
 # ============================================================
-# TRIGGER FINAL WORKFLOW
+# TRIGGER WORKFLOW 2
 # ============================================================
 
 def trigger_final_deployment(request_id, record):
+
     (
         github_token,
         github_owner,
         github_repo
     ) = get_github_configuration()
+
+    github_ref = os.getenv(
+        "GH_REF",
+        DEFAULT_GITHUB_REF
+    )
 
     url = (
         f"https://api.github.com/repos/"
@@ -132,24 +139,39 @@ def trigger_final_deployment(request_id, record):
     )
 
     headers = {
-        "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {github_token}",
-        "X-GitHub-Api-Version": "2022-11-28"
+        "Accept":
+            "application/vnd.github+json",
+
+        "Authorization":
+            f"Bearer {github_token}",
+
+        "X-GitHub-Api-Version":
+            "2022-11-28"
     }
 
     payload = {
-        "ref": GITHUB_REF,
+        "ref": github_ref,
 
         "inputs": {
-            "request_id": str(request_id),
 
-            "build_number": str(
-                record.get("build_number", "")
-            ),
+            "request_id":
+                str(request_id),
 
-            "staging_path": str(
-                record.get("staging_path", "")
-            )
+            "build_number":
+                str(
+                    record.get(
+                        "build_number",
+                        ""
+                    )
+                ),
+
+            "staging_path":
+                str(
+                    record.get(
+                        "staging_path",
+                        ""
+                    )
+                )
         }
     }
 
@@ -161,8 +183,9 @@ def trigger_final_deployment(request_id, record):
     )
 
     if response.status_code != 204:
+
         raise RuntimeError(
-            "GitHub workflow dispatch failed. "
+            "Workflow dispatch failed. "
             f"HTTP {response.status_code}: "
             f"{response.text}"
         )
@@ -171,43 +194,52 @@ def trigger_final_deployment(request_id, record):
 
 
 # ============================================================
-# DISPATCH FINAL WORKFLOW ONCE
+# TRIGGER ONLY ONCE
 # ============================================================
 
 def attempt_final_deployment(db, request_id):
+
     record = db[request_id]
 
-    # Not approved yet.
+    # Must be fully approved.
     if record.get("status") != "APPROVED":
         return False, None
 
-    # Already triggered.
+    # Already dispatched.
     if record.get(
         "final_deploy_triggered",
         False
     ):
         return False, None
 
-    # A previous trigger attempt is active.
+    # Don't dispatch twice while a call is already happening.
     if record.get(
         "final_deploy_trigger_in_progress",
         False
     ):
         return False, None
 
+    # Mark as dispatching.
     record[
         "final_deploy_trigger_in_progress"
     ] = True
 
+    record[
+        "final_deploy_trigger_error"
+    ] = None
+
     db[request_id] = record
+
     save_db(db)
 
     try:
+
         trigger_final_deployment(
             request_id,
             record
         )
 
+        # GitHub accepted Workflow 2.
         record[
             "final_deploy_triggered"
         ] = True
@@ -221,11 +253,13 @@ def attempt_final_deployment(db, request_id):
         ] = None
 
         db[request_id] = record
+
         save_db(db)
 
         return True, None
 
     except Exception as error:
+
         record[
             "final_deploy_triggered"
         ] = False
@@ -239,13 +273,14 @@ def attempt_final_deployment(db, request_id):
         ] = str(error)
 
         db[request_id] = record
+
         save_db(db)
 
         return False, str(error)
 
 
 # ============================================================
-# STREAMLIT CONFIGURATION
+# STREAMLIT PAGE
 # ============================================================
 
 st.set_page_config(
@@ -257,21 +292,22 @@ st.set_page_config(
 st.title("JFrog Deployment Approval")
 
 st.caption(
-    "Scout JFrog migration approval"
+    "Scout JFrog Migration Approval"
 )
 
 
 # ============================================================
-# LOAD APPROVAL DATABASE
+# LOAD DATABASE
 # ============================================================
 
 db = load_db()
 
 if not db:
+
     st.info(
-        "There are currently no "
-        "deployment approval requests."
+        "No deployment approval requests exist."
     )
+
     st.stop()
 
 
@@ -280,9 +316,9 @@ if not db:
 #
 # Example:
 #
-# http://SERVER:8501/
+# http://server:8501/
 # ?request_id=CW35-001
-# &approver=person1@company.com
+# &approver=user@company.com
 # ============================================================
 
 request_id = st.query_params.get(
@@ -295,17 +331,18 @@ approver = st.query_params.get(
 
 
 # ============================================================
-# TEST / ADMIN VIEW
+# ADMIN / TEST VIEW
 # ============================================================
 
 if not request_id:
-    st.subheader("Approval Requests")
 
-    request_ids = list(db.keys())
+    st.subheader(
+        "Approval Requests"
+    )
 
     request_id = st.selectbox(
         "Select Approval Request",
-        request_ids
+        list(db.keys())
     )
 
 
@@ -314,14 +351,21 @@ if not request_id:
 # ============================================================
 
 if request_id not in db:
+
     st.error(
         f"Approval request "
         f"'{request_id}' was not found."
     )
+
     st.stop()
 
 
 record = db[request_id]
+
+approvals = record.get(
+    "approvals",
+    {}
+)
 
 approver_link_mode = (
     approver is not None
@@ -333,16 +377,14 @@ approver_link_mode = (
 # ============================================================
 
 if approver_link_mode:
-    approvals = record.get(
-        "approvals",
-        {}
-    )
 
     if approver not in approvals:
+
         st.error(
-            "This user is not listed "
-            "as an approver for this deployment."
+            "This approval link is not valid "
+            "for this deployment."
         )
+
         st.stop()
 
 
@@ -357,11 +399,21 @@ st.subheader(
 col1, col2 = st.columns(2)
 
 with col1:
-    st.write("**Request ID**")
-    st.code(request_id)
+
+    st.write(
+        "**Request ID**"
+    )
+
+    st.code(
+        request_id
+    )
+
 
 with col2:
-    st.write("**Build Number**")
+
+    st.write(
+        "**Build Number**"
+    )
 
     st.code(
         record.get(
@@ -384,13 +436,13 @@ st.code(
 
 
 # ============================================================
-# OVERALL STATUS
+# APPROVAL STATUS
 # ============================================================
 
 st.divider()
 
 st.subheader(
-    "Overall Approval Status"
+    "Approval Status"
 )
 
 status = record.get(
@@ -398,68 +450,88 @@ status = record.get(
     "PENDING"
 )
 
+
 if status == "APPROVED":
-    st.success("APPROVED")
+
+    st.success(
+        "ALL APPROVALS RECEIVED"
+    )
+
 
 elif status == "REJECTED":
-    st.error("REJECTED")
+
+    st.error(
+        "DEPLOYMENT REJECTED"
+    )
+
 
 else:
-    st.warning("PENDING")
+
+    st.warning(
+        "WAITING FOR APPROVALS"
+    )
 
 
 # ============================================================
-# APPROVAL COUNTS
+# COUNTS
 # ============================================================
 
-approvals = record.get(
-    "approvals",
-    {}
+total_count = len(
+    approvals
 )
 
-total_count = len(approvals)
-
 approved_count = sum(
-    1
+    value == "APPROVED"
     for value in approvals.values()
-    if value == "APPROVED"
 )
 
 rejected_count = sum(
-    1
+    value == "REJECTED"
     for value in approvals.values()
-    if value == "REJECTED"
 )
 
 pending_count = sum(
-    1
+    value == "PENDING"
     for value in approvals.values()
-    if value == "PENDING"
 )
 
-st.write(
-    f"**Approved:** "
-    f"{approved_count} / {total_count}"
-)
 
-st.write(
-    f"**Rejected:** "
-    f"{rejected_count}"
-)
+col1, col2, col3 = st.columns(3)
 
-st.write(
-    f"**Pending:** "
-    f"{pending_count}"
-)
+with col1:
+
+    st.metric(
+        "Approved",
+        f"{approved_count}/{total_count}"
+    )
+
+
+with col2:
+
+    st.metric(
+        "Pending",
+        pending_count
+    )
+
+
+with col3:
+
+    st.metric(
+        "Rejected",
+        rejected_count
+    )
 
 
 # ============================================================
-# APPROVER STATUS LIST
+# APPROVERS
 # ============================================================
 
 st.divider()
 
-st.subheader("Approvers")
+st.subheader(
+    "Approvers"
+)
+
 
 for person, approval_status in approvals.items():
 
@@ -468,29 +540,45 @@ for person, approval_status in approvals.items():
     )
 
     with col1:
-        st.write(person)
+
+        st.write(
+            person
+        )
+
 
     with col2:
 
         if approval_status == "APPROVED":
-            st.success("APPROVED")
+
+            st.success(
+                "APPROVED"
+            )
 
         elif approval_status == "REJECTED":
-            st.error("REJECTED")
+
+            st.error(
+                "REJECTED"
+            )
 
         else:
-            st.warning("PENDING")
+
+            st.warning(
+                "PENDING"
+            )
 
 
 # ============================================================
-# APPROVER ACTION
+# APPROVER-SPECIFIC PAGE
 # ============================================================
 
 st.divider()
 
+
 if approver_link_mode:
 
-    st.subheader("Your Approval")
+    st.subheader(
+        "Your Decision"
+    )
 
     st.write(
         f"Approver: **{approver}**"
@@ -500,48 +588,55 @@ if approver_link_mode:
         approver
     ]
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # ALREADY APPROVED
-    # --------------------------------------------------------
+    # ========================================================
 
     if current_status == "APPROVED":
 
         st.success(
-            "You already approved "
+            "You have already approved "
             "this deployment."
         )
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # ALREADY REJECTED
-    # --------------------------------------------------------
+    # ========================================================
 
     elif current_status == "REJECTED":
 
         st.error(
-            "You already rejected "
+            "You have already rejected "
             "this deployment."
         )
 
-    # --------------------------------------------------------
-    # SOMEBODY ELSE REJECTED
-    # --------------------------------------------------------
 
-    elif record.get("status") == "REJECTED":
+    # ========================================================
+    # DEPLOYMENT ALREADY REJECTED
+    # ========================================================
+
+    elif record["status"] == "REJECTED":
 
         st.error(
-            "This deployment request "
-            "has already been rejected."
+            "This deployment has already "
+            "been rejected."
         )
 
-    # --------------------------------------------------------
-    # ALLOW APPROVAL
-    # --------------------------------------------------------
+
+    # ========================================================
+    # APPROVE / REJECT
+    # ========================================================
 
     else:
 
-        col1, col2 = st.columns(2)
+        approve_column, reject_column = (
+            st.columns(2)
+        )
 
-        with col1:
+
+        with approve_column:
 
             approve_clicked = st.button(
                 "Approve",
@@ -549,7 +644,8 @@ if approver_link_mode:
                 use_container_width=True
             )
 
-        with col2:
+
+        with reject_column:
 
             reject_clicked = st.button(
                 "Reject",
@@ -575,12 +671,18 @@ if approver_link_mode:
                 request_id
             ] = record
 
-            # Save approval BEFORE attempting
-            # to dispatch Workflow 2.
+            # First save approval.
             save_db(db)
 
             deployment_triggered = False
             deployment_error = None
+
+
+            # ================================================
+            # LAST APPROVAL?
+            #
+            # If yes, trigger Workflow 2 IMMEDIATELY.
+            # ================================================
 
             if (
                 record["status"]
@@ -590,10 +692,12 @@ if approver_link_mode:
                 (
                     deployment_triggered,
                     deployment_error
+
                 ) = attempt_final_deployment(
                     db,
                     request_id
                 )
+
 
             if deployment_triggered:
 
@@ -601,11 +705,13 @@ if approver_link_mode:
                     "deployment_started"
                 ] = True
 
+
             if deployment_error:
 
                 st.session_state[
                     "deployment_error"
                 ] = deployment_error
+
 
             st.rerun()
 
@@ -635,12 +741,11 @@ if approver_link_mode:
 
 else:
 
-    if status == "PENDING":
-
-        st.info(
-            "Open an approver-specific URL "
-            "to approve or reject this deployment."
-        )
+    st.info(
+        "This is the administrative view. "
+        "Approvers use their individual "
+        "approval links."
+    )
 
 
 # ============================================================
@@ -653,9 +758,13 @@ st.subheader(
     "Final Deployment"
 )
 
-# Get latest state.
+# Load latest status again.
 db = load_db()
-record = db[request_id]
+
+record = db[
+    request_id
+]
+
 
 final_triggered = record.get(
     "final_deploy_triggered",
@@ -676,15 +785,15 @@ trigger_error = record.get(
 # REJECTED
 # ============================================================
 
-if record.get("status") == "REJECTED":
+if record["status"] == "REJECTED":
 
     st.error(
         "Final deployment blocked."
     )
 
     st.write(
-        "At least one required approver "
-        "rejected this deployment."
+        "At least one required approval "
+        "was rejected."
     )
 
 
@@ -692,18 +801,23 @@ if record.get("status") == "REJECTED":
 # PENDING
 # ============================================================
 
-elif record.get("status") == "PENDING":
+elif record["status"] == "PENDING":
 
     st.warning(
-        "Final deployment is waiting "
-        "for approval."
+        "Waiting for remaining approvals."
     )
 
     pending_people = [
+
         person
-        for person, approval_status
-        in record["approvals"].items()
-        if approval_status == "PENDING"
+
+        for person, person_status
+
+        in record[
+            "approvals"
+        ].items()
+
+        if person_status == "PENDING"
     ]
 
     for person in pending_people:
@@ -717,32 +831,32 @@ elif record.get("status") == "PENDING":
 # APPROVED
 # ============================================================
 
-elif record.get("status") == "APPROVED":
+elif record["status"] == "APPROVED":
 
     st.success(
-        "All required approvers "
-        "approved the deployment."
+        "All approvers approved."
     )
+
 
     if final_triggered:
 
         st.success(
-            "Final deployment workflow "
-            "was triggered."
+            "Workflow 2 has been triggered."
         )
+
 
     elif trigger_in_progress:
 
         st.info(
-            "Final deployment trigger "
-            "is being processed."
+            "Workflow 2 is being triggered."
         )
+
 
     elif trigger_error:
 
         st.error(
-            "Final deployment could not "
-            "be triggered."
+            "All approvals were received, "
+            "but Workflow 2 failed to start."
         )
 
         st.code(
@@ -751,7 +865,7 @@ elif record.get("status") == "APPROVED":
 
 
 # ============================================================
-# SESSION MESSAGES
+# SUCCESS MESSAGE
 # ============================================================
 
 if st.session_state.pop(
@@ -760,10 +874,14 @@ if st.session_state.pop(
 ):
 
     st.success(
-        "Final JFrog deployment workflow "
-        "started successfully."
+        "All approvals received. "
+        "Final deployment workflow started."
     )
 
+
+# ============================================================
+# ERROR MESSAGE
+# ============================================================
 
 deployment_error = (
     st.session_state.pop(
@@ -775,8 +893,8 @@ deployment_error = (
 if deployment_error:
 
     st.error(
-        "Approval succeeded, but Workflow 2 "
-        "could not be started."
+        "Approval was recorded, "
+        "but Workflow 2 could not be started."
     )
 
     st.code(
