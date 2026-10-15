@@ -153,5 +153,5 @@ jobs:
         shell: pwsh
         run: |
           jf rt s `
-            "rvtm-vw-rvt-scout-build-binaries-clone/vw-group-commit-vault/${{ github.event.inputs.build_number }}/*" `
+            "rvtm-vw-rvt-scout-build-binaries-clone/${{ github.event.inputs.build_number }}/*" `
             --server-id=scout-artifactory
