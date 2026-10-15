@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       source_url:
-        description: "Full RVT Artifactory URL"
+        description: "Source Build VWG"
         required: true
         type: string
 
-      target_repo:
-        description: "Target Scout Repository"
+      build_number:
+        description: "OTA Release Build"
         required: true
         type: string
 
@@ -135,11 +135,16 @@ jobs:
       - name: Upload Files
         shell: pwsh
         run: |
+          $build = "${{ github.event.inputs.build_number }}"
+          $targetRepo = "rvtm-vw-rvt-scout-build-binaries-clone"
+          Write-Host "Build Number     : $build"
+          Write-Host "Local Source : C:\Temp\Artifacts"
+          Write-Host "Target       : $targetRepo/vw-group-commit-vault/$cwNumber/"
           Set-Location "C:\Temp\Artifacts"
           
           jf rt upload `
-            "./*" `
-            "${{ github.event.inputs.target_repo }}/" `
+            "(*)" `
+            "$targetRepo/vw-group-commit-vault/$build/{1}" `
             --flat=false `
             --recursive=true `
             --server-id=scout-artifactory
