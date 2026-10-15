@@ -1,23 +1,21 @@
-name: Final JFrog Deploy
-
-run-name: "Final Deploy - ${{ inputs.build_number }}"
+name: Final JFrog Deployment
 
 on:
   workflow_dispatch:
     inputs:
 
+      request_id:
+        description: "Approval Request ID"
+        required: true
+        type: string
+
       build_number:
-        description: "Build Number (example: CW35 (OTA 2026.33.100))"
+        description: "Build Number"
         required: true
         type: string
 
-      source_url:
-        description: "Source JFrog File/Folder URL"
-        required: true
-        type: string
-
-      target_repo:
-        description: "Target JFrog Repository Name"
+      staging_path:
+        description: "Scout staging JFrog path"
         required: true
         type: string
 
@@ -30,63 +28,42 @@ jobs:
 
     steps:
 
-      # ==================================================
-      # SHOW INPUTS
-      # ==================================================
-
-      - name: Show Inputs
+      - name: Display Deployment Information
         shell: pwsh
         run: |
 
-          Write-Host "======================================"
-          Write-Host "FINAL JFROG DEPLOY"
-          Write-Host "======================================"
+          Write-Host "=========================================="
+          Write-Host "FINAL JFROG DEPLOYMENT"
+          Write-Host "=========================================="
 
-          Write-Host "Build Number : ${{ inputs.build_number }}"
-          Write-Host "Source URL   : ${{ inputs.source_url }}"
-          Write-Host "Target Repo  : ${{ inputs.target_repo }}"
+          Write-Host ""
+          Write-Host "Approval Request:"
+          Write-Host "${{ inputs.request_id }}"
 
-          Write-Host "======================================"
+          Write-Host ""
+          Write-Host "Build Number:"
+          Write-Host "${{ inputs.build_number }}"
 
+          Write-Host ""
+          Write-Host "Staging JFrog Path:"
+          Write-Host "${{ inputs.staging_path }}"
 
-      # ==================================================
-      # PREPARE DOWNLOAD DIRECTORY
-      # ==================================================
+          Write-Host ""
+          Write-Host "All required approvals were received."
 
-      - name: Prepare Download Directory
+          Write-Host ""
+          Write-Host "Workflow 2 successfully started."
+
+      - name: Final Deployment Placeholder
         shell: pwsh
         run: |
 
-          $downloadPath = "C:\Temp\FinalJFrogDeploy"
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "FINAL UPLOAD PLACEHOLDER"
+          Write-Host "=========================================="
 
-          Write-Host "Preparing download directory:"
-          Write-Host $downloadPath
-
-          if (Test-Path $downloadPath) {
-
-              Write-Host "Removing old download directory..."
-
-              Remove-Item `
-                $downloadPath `
-                -Recurse `
-                -Force
-          }
-
-          New-Item `
-            -ItemType Directory `
-            -Path $downloadPath `
-            -Force | Out-Null
-
-          Write-Host "Download directory ready."
-
-
-      # ==================================================
-      # PARSE SOURCE URL
-      # ==================================================
-
-      - name: Parse Source JFrog URL
-        id: parse
-        shell: pwsh
-        run: |
-
-          $sourceUrl
+          Write-Host ""
+          Write-Host "The actual final JFrog upload"
+          Write-Host "will be added after approval"
+          Write-Host "workflow validation."
