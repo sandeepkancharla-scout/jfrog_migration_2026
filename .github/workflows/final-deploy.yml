@@ -1,0 +1,261 @@
+name: Final JFrog Deployment
+
+run-name: "Final Deploy ${{ inputs.build_number }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      request_id:
+        description: "Approval Request ID"
+        required: true
+        type: string
+
+      source_artifactory:
+        description: "Original Source Artifactory"
+        required: true
+        type: string
+
+      build_number:
+        description: "Build Number"
+        required: true
+        type: string
+
+      staging_path:
+        description: "Scout Staging Artifactory Path"
+        required: true
+        type: string
+
+      target_artifactory:
+        description: "Final Target Artifactory Repository/Path"
+        required: true
+        type: string
+
+
+jobs:
+
+  final-deployment:
+
+    runs-on: [self-hosted, Windows]
+
+    env:
+      FINAL_WORK_FOLDER: C:\Temp\FinalArtifacts
+
+    steps:
+
+      # ======================================================
+      # DISPLAY INPUTS
+      # ======================================================
+
+      - name: Display Deployment Information
+        shell: pwsh
+        run: |
+          Write-Host "======================================"
+          Write-Host "FINAL JFROG DEPLOYMENT"
+          Write-Host "======================================"
+
+          Write-Host "Request ID:"
+          Write-Host "${{ inputs.request_id }}"
+
+          Write-Host ""
+          Write-Host "Build Number:"
+          Write-Host "${{ inputs.build_number }}"
+
+          Write-Host ""
+          Write-Host "Original Source:"
+          Write-Host "${{ inputs.source_artifactory }}"
+
+          Write-Host ""
+          Write-Host "Scout Staging Path:"
+          Write-Host "${{ inputs.staging_path }}"
+
+          Write-Host ""
+          Write-Host "Final Target:"
+          Write-Host "${{ inputs.target_artifactory }}"
+
+
+      # ======================================================
+      # SETUP JFROG CLI
+      # ======================================================
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+
+
+      # ======================================================
+      # CONFIGURE SCOUT ARTIFACTORY
+      # ======================================================
+
+      - name: Remove Existing JFrog Configuration
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          jf c rm scout-artifactory --quiet
+
+
+      - name: Configure Scout Artifactory
+        shell: pwsh
+        run: |
+          jf c add scout-artifactory `
+            --url="${{ secrets.TARGET_URL }}" `
+            --access-token="${{ secrets.TARGET_ACCESS_TOKEN }}" `
+            --interactive=false `
+            --overwrite=true
+
+
+      - name: Verify Scout Connection
+        shell: pwsh
+        run: |
+          jf rt ping --server-id=scout-artifactory
+
+
+      # ======================================================
+      # PREPARE LOCAL FOLDER
+      # ======================================================
+
+      - name: Prepare Final Working Folder
+        shell: pwsh
+        run: |
+          if (Test-Path $env:FINAL_WORK_FOLDER) {
+              Remove-Item `
+                $env:FINAL_WORK_FOLDER `
+                -Recurse `
+                -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path $env:FINAL_WORK_FOLDER `
+            -Force | Out-Null
+
+
+      # ======================================================
+      # SEARCH STAGING
+      # ======================================================
+
+      - name: Search Staged Artifacts
+        shell: pwsh
+        run: |
+          $stagingPath = "${{ inputs.staging_path }}".TrimEnd("/")
+
+          $searchPattern = "$stagingPath/**"
+
+          Write-Host "Searching staging:"
+          Write-Host $searchPattern
+
+          jf rt s `
+            "$searchPattern" `
+            --server-id=scout-artifactory
+
+
+      # ======================================================
+      # DOWNLOAD FROM STAGING
+      # ======================================================
+
+      - name: Download Staged Artifacts
+        shell: pwsh
+        run: |
+          $stagingPath = "${{ inputs.staging_path }}".TrimEnd("/")
+
+          $downloadPattern = "$stagingPath/**"
+
+          Write-Host "Downloading staging artifacts:"
+          Write-Host $downloadPattern
+
+          jf rt dl `
+            "$downloadPattern" `
+            "$env:FINAL_WORK_FOLDER\" `
+            --flat=false `
+            --recursive=true `
+            --include-dirs=true `
+            --server-id=scout-artifactory
+
+
+      # ======================================================
+      # VALIDATE STAGING DOWNLOAD
+      # ======================================================
+
+      - name: Validate Staging Download
+        shell: pwsh
+        run: |
+          $files = @(
+              Get-ChildItem `
+                $env:FINAL_WORK_FOLDER `
+                -Recurse `
+                -File
+          )
+
+          $fileCount = $files.Count
+
+          Write-Host "Downloaded staged files: $fileCount"
+
+          if ($fileCount -eq 0) {
+              throw "No staged artifacts were downloaded."
+          }
+
+
+      # ======================================================
+      # UPLOAD TO FINAL TARGET
+      #
+      # Build number becomes a folder under target path.
+      # ======================================================
+
+      - name: Upload To Final Artifactory
+        shell: pwsh
+        run: |
+          $targetPath = "${{ inputs.target_artifactory }}".TrimEnd("/")
+
+          $build = "${{ inputs.build_number }}"
+
+          $finalDestination = "$targetPath/$build/"
+
+          Write-Host "Final Destination:"
+          Write-Host $finalDestination
+
+          Set-Location $env:FINAL_WORK_FOLDER
+
+          jf rt upload `
+            "(*)" `
+            "$finalDestination{1}" `
+            --flat=false `
+            --recursive=true `
+            --server-id=scout-artifactory
+
+
+      # ======================================================
+      # VERIFY FINAL UPLOAD
+      # ======================================================
+
+      - name: Verify Final Upload
+        shell: pwsh
+        run: |
+          $targetPath = "${{ inputs.target_artifactory }}".TrimEnd("/")
+
+          $build = "${{ inputs.build_number }}"
+
+          $searchPattern = "$targetPath/$build/**"
+
+          Write-Host "Verifying final upload:"
+          Write-Host $searchPattern
+
+          jf rt s `
+            "$searchPattern" `
+            --server-id=scout-artifactory
+
+
+      # ======================================================
+      # CLEANUP
+      # ======================================================
+
+      - name: Clean Final Working Folder
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path $env:FINAL_WORK_FOLDER) {
+              Remove-Item `
+                $env:FINAL_WORK_FOLDER `
+                -Recurse `
+                -Force
+          }
+
+          Write-Host "Final temporary files removed."
