@@ -155,3 +155,20 @@ jobs:
           jf rt s `
             "rvtm-vw-rvt-scout-build-binaries-clone/${{ github.event.inputs.build_number }}/*" `
             --server-id=scout-artifactory
+            
+      - name: Create approval Request
+        shell: pwsh
+        run: |
+          $build = "${{ github.event.inputs.build_number }}"
+
+          $body = @{
+            build_number = $build
+            staging_path = "rvtm-vw-rvt-scout-build-binaries-clone/$build/"
+          } | ConvertTo-Json
+
+          Invoke-RestMethod `
+            -Uri "${{ secrets.APPROVAL_API_URL }}/approval/create" `
+            -Method POST `
+            -ContentType "application/json" `
+            -Body $body
+          
