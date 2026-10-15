@@ -1,4 +1,4 @@
-name: Test SMTP Email
+name: Test Gmail SMTP Email
 
 on:
   workflow_dispatch:
@@ -11,27 +11,24 @@ jobs:
 
     steps:
 
-      - name: Test SMTP
+      - name: Test Gmail SMTP
         shell: pwsh
-
         env:
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
 
         run: |
 
-          $smtpServer = "smtp.office365.com"
+          $smtpServer = "smtp.gmail.com"
           $smtpPort = 587
 
           $from = $env:SMTP_USERNAME
+          $to   = $env:SMTP_USERNAME
 
-          # For first test, send to yourself
-          $to = $env:SMTP_USERNAME
-
-          Write-Host "Testing SMTP connection..."
+          Write-Host "Testing Gmail SMTP..."
           Write-Host "SMTP Server: $smtpServer"
           Write-Host "SMTP Port: $smtpPort"
-          Write-Host "Sender: $from"
+          Write-Host "Sender configured."
 
           $securePassword = ConvertTo-SecureString `
             $env:SMTP_PASSWORD `
@@ -49,5 +46,14 @@ jobs:
             -Credential $credential `
             -From $from `
             -To $to `
-            -Subject "JFrog Approval SMTP Test" `
-            -Body "SMTP email test from the JFrog migration workflow."
+            -Subject "JFrog Approval Email Test" `
+            -Body @"
+          JFrog Deployment Approval Test
+
+          This message verifies that the JFrog migration
+          approval workflow can send notification emails.
+
+          If you received this message, Gmail SMTP is working.
+          "@
+
+          Write-Host "Email command completed."
