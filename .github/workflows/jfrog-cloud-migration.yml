@@ -139,12 +139,12 @@ jobs:
           $targetRepo = "rvtm-vw-rvt-scout-build-binaries-clone"
           Write-Host "Build Number     : $build"
           Write-Host "Local Source : C:\Temp\Artifacts"
-          Write-Host "Target       : $targetRepo/vw-group-commit-vault/$cwNumber/"
+          Write-Host "Target       : $targetRepo/vw-group-commit-vault/$build/"
           Set-Location "C:\Temp\Artifacts"
           
           jf rt upload `
             "(*)" `
-            "$targetRepo/vw-group-commit-vault/$build/{1}" `
+            "$targetRepo/$build/{1}" `
             --flat=false `
             --recursive=true `
             --server-id=scout-artifactory
