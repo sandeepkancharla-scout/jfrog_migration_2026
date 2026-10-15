@@ -1,1 +1,92 @@
+name: Final JFrog Deploy
 
+run-name: "Final Deploy - ${{ inputs.build_number }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      build_number:
+        description: "Build Number (example: CW35 (OTA 2026.33.100))"
+        required: true
+        type: string
+
+      source_url:
+        description: "Source JFrog File/Folder URL"
+        required: true
+        type: string
+
+      target_repo:
+        description: "Target JFrog Repository Name"
+        required: true
+        type: string
+
+
+jobs:
+
+  final-deploy:
+
+    runs-on: self-hosted
+
+    steps:
+
+      # ==================================================
+      # SHOW INPUTS
+      # ==================================================
+
+      - name: Show Inputs
+        shell: pwsh
+        run: |
+
+          Write-Host "======================================"
+          Write-Host "FINAL JFROG DEPLOY"
+          Write-Host "======================================"
+
+          Write-Host "Build Number : ${{ inputs.build_number }}"
+          Write-Host "Source URL   : ${{ inputs.source_url }}"
+          Write-Host "Target Repo  : ${{ inputs.target_repo }}"
+
+          Write-Host "======================================"
+
+
+      # ==================================================
+      # PREPARE DOWNLOAD DIRECTORY
+      # ==================================================
+
+      - name: Prepare Download Directory
+        shell: pwsh
+        run: |
+
+          $downloadPath = "C:\Temp\FinalJFrogDeploy"
+
+          Write-Host "Preparing download directory:"
+          Write-Host $downloadPath
+
+          if (Test-Path $downloadPath) {
+
+              Write-Host "Removing old download directory..."
+
+              Remove-Item `
+                $downloadPath `
+                -Recurse `
+                -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path $downloadPath `
+            -Force | Out-Null
+
+          Write-Host "Download directory ready."
+
+
+      # ==================================================
+      # PARSE SOURCE URL
+      # ==================================================
+
+      - name: Parse Source JFrog URL
+        id: parse
+        shell: pwsh
+        run: |
+
+          $sourceUrl
