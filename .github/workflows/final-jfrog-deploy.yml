@@ -1,13 +1,1 @@
-name: Final JFrog Deployment
 
-on:
-  workflow_dispatch:
-    inputs:
-
-      request_id: name
-        required: true
-        type: string
-
-      build_number: n
-        required: true
-        type: string
