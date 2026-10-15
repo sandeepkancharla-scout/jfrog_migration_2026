@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       source_url:
-        description: "Source Build VWG"
+        description: "Source Build VWG (File URL from JFrog)"
         required: true
         type: string
 
       build_number:
-        description: "OTA Release Build"
+        description: "OTA Release Build (Ex 39.100 or CW29-39.100)"
         required: true
         type: string
 
