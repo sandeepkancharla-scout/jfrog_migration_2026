@@ -1,33 +1,62 @@
 name: JFrog Migration
 
+run-name: "Stage Build ${{ inputs.build_number }}"
+
 on:
   workflow_dispatch:
     inputs:
+
       source_url:
-        description: "Source Build VWG (File URL from JFrog)"
+        description: "Source Build VWG (File/Folder URL from JFrog)"
         required: true
         type: string
 
       build_number:
-        description: "OTA Release Build (Ex 39.100 or CW29-39.100)"
+        description: "OTA Release Build (example: 39.100 or CW29-39.100)"
         required: true
         type: string
 
+      target_artifactory:
+        description: "Final Scout Artifactory repository/path"
+        required: true
+        type: string
+
+
 jobs:
+
   migrate:
+
     runs-on: [self-hosted, Windows]
+
+    env:
+      WORK_FOLDER: C:\Temp\Artifacts
+      STAGING_REPO: rvtm-vw-rvt-scout-build-binaries-clone
 
     steps:
 
+      # ======================================================
+      # SETUP JFROG CLI
+      # ======================================================
+
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v4
+
+
+      # ======================================================
+      # CLEAN EXISTING CONFIGURATIONS
+      # ======================================================
 
       - name: Cleanup Existing Configs
         shell: pwsh
         continue-on-error: true
         run: |
-          jf c rm source
-          jf c rm scout-artifactory
+          jf c rm source --quiet
+          jf c rm scout-artifactory --quiet
+
+
+      # ======================================================
+      # CONFIGURE SOURCE
+      # ======================================================
 
       - name: Configure Source
         shell: pwsh
@@ -38,6 +67,11 @@ jobs:
             --interactive=false `
             --overwrite=true
 
+
+      # ======================================================
+      # CONFIGURE SCOUT ARTIFACTORY
+      # ======================================================
+
       - name: Configure Target
         shell: pwsh
         run: |
@@ -47,81 +81,180 @@ jobs:
             --interactive=false `
             --overwrite=true
 
+
+      # ======================================================
+      # VERIFY CONNECTIONS
+      # ======================================================
+
       - name: Verify Source Connection
         shell: pwsh
         run: |
           jf rt ping --server-id=source
-          
+
+
       - name: Verify Target DNS
         shell: pwsh
         run: |
-            Write-Host "Checking Scout DNS..."
-            nslookup artifactory.sctmtrs.xyz
-          
+          Write-Host "Checking Scout DNS..."
+
+          nslookup artifactory.sctmtrs.xyz
+
 
       - name: Verify Target Connection
         shell: pwsh
         run: |
           jf rt ping --server-id=scout-artifactory
 
+
+      # ======================================================
+      # CLEAN WORKING FOLDER
+      # ======================================================
+
       - name: Clean Working Folder
         shell: pwsh
         run: |
-          if (Test-Path "C:\Temp\Artifacts") {
-              Remove-Item "C:\Temp\Artifacts" -Recurse -Force
+          if (Test-Path $env:WORK_FOLDER) {
+              Remove-Item `
+                $env:WORK_FOLDER `
+                -Recurse `
+                -Force
           }
 
           New-Item `
             -ItemType Directory `
-            -Path "C:\Temp\Artifacts" `
-            -Force
+            -Path $env:WORK_FOLDER `
+            -Force | Out-Null
+
+          Write-Host "Working folder:"
+          Write-Host $env:WORK_FOLDER
+
+
+      # ======================================================
+      # PARSE SOURCE URL
+      #
+      # This replaces the broken HTML-containing URL parsing.
+      # ======================================================
 
       - name: Parse Source URL
+        id: parse_source
         shell: pwsh
         run: |
-          $url = "${{ github.event.inputs.source_url }}"
+          $sourceUrl = "${{ inputs.source_url }}".Trim()
 
-          $artifactPath = $url.Replace(
-            "https://jfrog.rivianvw.io/artifactory/",
-            ""
+          Write-Host "Source URL:"
+          Write-Host $sourceUrl
+
+          try {
+              $uri = [System.Uri]$sourceUrl
+          }
+          catch {
+              throw "Invalid source Artifactory URL: $sourceUrl"
+          }
+
+          $artifactPath = $uri.AbsolutePath
+
+          if ($artifactPath.StartsWith("/artifactory/")) {
+              $artifactPath = $artifactPath.Substring(
+                  "/artifactory/".Length
+              )
+          }
+          else {
+              $artifactPath = $artifactPath.TrimStart("/")
+          }
+
+          $artifactPath = [System.Uri]::UnescapeDataString(
+              $artifactPath
           )
 
-          $artifactPath = $artifactPath.TrimEnd('/')
+          $artifactPath = $artifactPath.TrimEnd("/")
+
+          if ([string]:: {
+              throw "Source URL did not contain an Artifactory repository path."
+          }
 
           $searchPattern = "$artifactPath/**"
 
+          Write-Host ""
           Write-Host "Artifact Path:"
           Write-Host $artifactPath
 
+          Write-Host ""
           Write-Host "Search Pattern:"
           Write-Host $searchPattern
 
-          $searchPattern | Out-File `
-            "$env:RUNNER_TEMP\artifactPath.txt"
+          "artifact_path=$artifactPath" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+          "search_pattern=$searchPattern" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+
+      # ======================================================
+      # SEARCH SOURCE
+      # ======================================================
 
       - name: Search Source Files
         shell: pwsh
         run: |
-          $searchPattern = Get-Content `
-            "$env:RUNNER_TEMP\artifactPath.txt"
+          $searchPattern = "${{ steps.parse_source.outputs.search_pattern }}"
+
+          Write-Host "Searching source Artifactory:"
+          Write-Host $searchPattern
 
           jf rt s `
             "$searchPattern" `
             --server-id=source
 
+
+      # ======================================================
+      # DOWNLOAD
+      # ======================================================
+
       - name: Download Files
         shell: pwsh
         run: |
-          $searchPattern = Get-Content `
-            "$env:RUNNER_TEMP\artifactPath.txt"
+          $searchPattern = "${{ steps.parse_source.outputs.search_pattern }}"
+
+          Write-Host "Downloading:"
+          Write-Host $searchPattern
 
           jf rt dl `
             "$searchPattern" `
-            "C:\Temp\Artifacts\" `
+            "$env:WORK_FOLDER\" `
             --flat=false `
             --recursive=true `
             --include-dirs=true `
             --server-id=source
+
+
+      # ======================================================
+      # VALIDATE DOWNLOAD
+      # ======================================================
+
+      - name: Validate Download
+        shell: pwsh
+        run: |
+          $files = @(
+              Get-ChildItem `
+                $env:WORK_FOLDER `
+                -Recurse `
+                -File
+          )
+
+          $fileCount = $files.Count
+
+          Write-Host "Downloaded files: $fileCount"
+
+          if ($fileCount -eq 0) {
+              throw "No artifacts were downloaded."
+          }
+
 
       - name: Show Downloaded Files
         shell: pwsh
@@ -129,46 +262,165 @@ jobs:
           Write-Host "Downloaded Files:"
 
           Get-ChildItem `
-            "C:\Temp\Artifacts" `
-            -Recurse -File
+            $env:WORK_FOLDER `
+            -Recurse `
+            -File |
+          ForEach-Object {
+              Write-Host $_.FullName
+          }
+
+
+      # ======================================================
+      # CREATE BUILD-NUMBER STAGING PATH
+      # ======================================================
+
+      - name: Display Staging Path
+        shell: pwsh
+        run: |
+          $build = "${{ inputs.build_number }}"
+
+          $stagingPath = (
+              "$env:STAGING_REPO/$build/"
+          )
+
+          Write-Host "Build Number:"
+          Write-Host $build
+
+          Write-Host ""
+          Write-Host "Staging Path:"
+          Write-Host $stagingPath
+
+
+      # ======================================================
+      # UPLOAD TO STAGING
+      # ======================================================
 
       - name: Upload Files
         shell: pwsh
         run: |
-          $build = "${{ github.event.inputs.build_number }}"
-          $targetRepo = "rvtm-vw-rvt-scout-build-binaries-clone"
-          Write-Host "Build Number     : $build"
-          Write-Host "Local Source : C:\Temp\Artifacts"
-          Write-Host "Target       : $targetRepo/vw-group-commit-vault/$build/"
-          Set-Location "C:\Temp\Artifacts"
-          
+          $build = "${{ inputs.build_number }}"
+
+          $targetPath = (
+              "$env:STAGING_REPO/$build/"
+          )
+
+          Write-Host "Build Number : $build"
+          Write-Host "Local Source : $env:WORK_FOLDER"
+          Write-Host "Target       : $targetPath"
+
+          Set-Location $env:WORK_FOLDER
+
           jf rt upload `
             "(*)" `
-            "$targetRepo/$build/{1}" `
+            "$targetPath{1}" `
             --flat=false `
             --recursive=true `
             --server-id=scout-artifactory
 
+
+      # ======================================================
+      # VERIFY STAGING UPLOAD
+      # ======================================================
+
       - name: Verify Upload
         shell: pwsh
         run: |
+          $build = "${{ inputs.build_number }}"
+
+          $searchPattern = (
+              "$env:STAGING_REPO/$build/**"
+          )
+
+          Write-Host "Verifying staging upload:"
+          Write-Host $searchPattern
+
           jf rt s `
-            "rvtm-vw-rvt-scout-build-binaries-clone/${{ github.event.inputs.build_number }}/*" `
+            "$searchPattern" `
             --server-id=scout-artifactory
-            
-      - name: Create approval Request
+
+
+      # ======================================================
+      # CREATE APPROVAL REQUEST
+      # ======================================================
+
+      - name: Create Approval Request
         shell: pwsh
+        env:
+          APPROVAL_API_URL: ${{ secrets.APPROVAL_API_URL }}
         run: |
-          $build = "${{ github.event.inputs.build_number }}"
+          if ([string]:: {
+              throw "APPROVAL_API_URL is not configured."
+          }
 
-          $body = @{
-            build_number = $build
-            staging_path = "rvtm-vw-rvt-scout-build-binaries-clone/$build/"
-          } | ConvertTo-Json
+          $build = "${{ inputs.build_number }}"
 
-          Invoke-RestMethod `
-            -Uri "${{ secrets.APPROVAL_API_URL }}/approval/create" `
+          $stagingPath = (
+              "$env:STAGING_REPO/$build/"
+          )
+
+          $requestBody = @{
+              source_artifactory = "${{ inputs.source_url }}"
+              build_number       = $build
+              staging_path       = $stagingPath
+              target_artifactory = "${{ inputs.target_artifactory }}"
+          }
+
+          $jsonBody = $requestBody |
+            ConvertTo-Json `
+              -Depth 10
+
+          $approvalEndpoint = (
+              $env:APPROVAL_API_URL.TrimEnd("/")
+              + "/approval/create"
+          )
+
+          Write-Host "Creating approval request..."
+          Write-Host "Approval endpoint:"
+          Write-Host $approvalEndpoint
+
+          $response = Invoke-RestMethod `
+            -Uri $approvalEndpoint `
             -Method POST `
             -ContentType "application/json" `
-            -Body $body
-      
+            -Body $jsonBody `
+            -TimeoutSec 30
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "APPROVAL REQUEST CREATED"
+          Write-Host "======================================"
+
+          Write-Host ""
+          Write-Host "Request ID:"
+          Write-Host $response.request_id
+
+          Write-Host ""
+          Write-Host "Approval Status:"
+          Write-Host $response.status
+
+          Write-Host ""
+          Write-Host "Approval Links:"
+
+          foreach ($approvalLink in $response.approval_links) {
+              Write-Host ""
+              Write-Host $approvalLink.approver
+              Write-Host $approvalLink.url
+          }
+
+
+      # ======================================================
+      # CLEAN LOCAL FILES
+      # ======================================================
+
+      - name: Clean Local Artifacts
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path $env:WORK_FOLDER) {
+              Remove-Item `
+                $env:WORK_FOLDER `
+                -Recurse `
+                -Force
+          }
+
+          Write-Host "Local temporary files removed."
