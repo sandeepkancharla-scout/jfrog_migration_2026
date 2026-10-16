@@ -5,14 +5,13 @@ run-name: Scout JFrog Direct Copy
 on:
   workflow_dispatch:
     inputs:
-
       source_url:
         description: "Full Scout JFrog source folder URL"
         required: true
         type: string
 
       target_url:
-        description: "Full Scout JFrog target repository/folder URL"
+        description: "Full Scout JFrog target repository or folder URL"
         required: true
         type: string
 
@@ -20,9 +19,7 @@ permissions:
   contents: read
 
 jobs:
-
   transfer:
-
     name: Scout Repository Direct Copy
 
     runs-on:
@@ -32,11 +29,8 @@ jobs:
     timeout-minutes: 180
 
     env:
-
       SCOUT_SERVER_ID: scout-artifactory
-
       JFROG_CLI_OFFER_CONFIG: "false"
-
       JFROG_CLI_LOG_LEVEL: INFO
 
     steps:
@@ -47,18 +41,11 @@ jobs:
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v4
-
         with:
           disable-auto-build-publish: true
-
         env:
           JF_URL: ${{ secrets.TARGET_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
-
-
-      # ==========================================================
-      # 2. SHOW JFROG VERSION
-      # ==========================================================
 
       - name: Show JFrog CLI Version
         shell: pwsh
@@ -71,18 +58,15 @@ jobs:
               throw 'JFrog CLI is not available.'
           }
 
-
       # ==========================================================
-      # 3. VALIDATE SCOUT SECRETS
+      # 2. VALIDATE SCOUT SECRETS
       # ==========================================================
 
       - name: Validate Scout Secrets
         shell: pwsh
-
         env:
           SCOUT_URL: ${{ secrets.TARGET_URL }}
           SCOUT_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
-
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -95,32 +79,27 @@ jobs:
           }
 
           Write-Host 'Scout credentials are available.'
-          Write-Host 'The same Scout connection will be used for source and target.'
-
+          Write-Host 'TARGET_URL and TARGET_ACCESS_TOKEN will be used for both repositories.'
 
       # ==========================================================
-      # 4. CLEAN PREVIOUS CONFIG
+      # 3. CLEAN EXISTING JFROG CONFIG
       # ==========================================================
 
       - name: Cleanup Existing Scout Config
         shell: pwsh
         continue-on-error: true
-
         run: |
           jf c rm "$env:SCOUT_SERVER_ID" --quiet
 
-
       # ==========================================================
-      # 5. CONFIGURE SCOUT
+      # 4. CONFIGURE SCOUT
       # ==========================================================
 
       - name: Configure Scout Artifactory
         shell: pwsh
-
         env:
           SCOUT_URL: ${{ secrets.TARGET_URL }}
           SCOUT_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
-
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -136,14 +115,12 @@ jobs:
 
           Write-Host 'Scout Artifactory configured.'
 
-
       # ==========================================================
-      # 6. VERIFY CONNECTION
+      # 5. VERIFY CONNECTION
       # ==========================================================
 
       - name: Verify Scout Connection
         shell: pwsh
-
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -154,27 +131,22 @@ jobs:
               throw 'Scout Artifactory connection failed.'
           }
 
-          Write-Host 'Scout connection OK.'
-
+          Write-Host 'Scout Artifactory connection OK.'
 
       # ==========================================================
-      # 7. PARSE SOURCE AND TARGET URLS
+      # 6. PARSE SOURCE AND TARGET URLS
       # ==========================================================
 
-      - name: Parse Source and Target URLs
+      - name: Parse Source And Target URLs
         id: paths
         shell: pwsh
-
         env:
           SCOUT_URL: ${{ secrets.TARGET_URL }}
-
         run: |
           $ErrorActionPreference = 'Stop'
 
           $sourceInput = '${{ inputs.source_url }}'.Trim()
-
           $targetInput = '${{ inputs.target_url }}'.Trim()
-
 
           if (-not $sourceInput) {
               throw 'Source URL is empty.'
@@ -184,14 +156,12 @@ jobs:
               throw 'Target URL is empty.'
           }
 
-
           try {
               $sourceUri = [System.Uri]$sourceInput
           }
           catch {
               throw 'Source URL is invalid.'
           }
-
 
           try {
               $targetUri = [System.Uri]$targetInput
@@ -200,7 +170,6 @@ jobs:
               throw 'Target URL is invalid.'
           }
 
-
           try {
               $scoutUri = [System.Uri]$env:SCOUT_URL
           }
@@ -208,11 +177,15 @@ jobs:
               throw 'TARGET_URL secret is invalid.'
           }
 
+          if ($sourceUri.Scheme -ne 'https') {
+              throw 'Source URL must use HTTPS.'
+          }
 
-          # Both source and target must be on Scout.
+          if ($targetUri.Scheme -ne 'https') {
+              throw 'Target URL must use HTTPS.'
+          }
 
           if ($sourceUri.Host -ne $scoutUri.Host) {
-
               Write-Host 'Source host:'
               Write-Host $sourceUri.Host
 
@@ -222,9 +195,7 @@ jobs:
               throw 'Source URL is not from configured Scout Artifactory.'
           }
 
-
           if ($targetUri.Host -ne $scoutUri.Host) {
-
               Write-Host 'Target host:'
               Write-Host $targetUri.Host
 
@@ -234,158 +205,100 @@ jobs:
               throw 'Target URL is not from configured Scout Artifactory.'
           }
 
-
           $marker = '/artifactory/'
-
-
-          # ======================================================
-          # SOURCE
-          # ======================================================
 
           $sourcePosition = $sourceUri.AbsolutePath.IndexOf(
               $marker,
               [System.StringComparison]::OrdinalIgnoreCase
           )
 
-
           if ($sourcePosition -lt 0) {
               throw 'Source URL must contain /artifactory/.'
           }
-
 
           $sourcePath = $sourceUri.AbsolutePath.Substring(
               $sourcePosition + $marker.Length
           )
 
-
           $sourcePath = [System.Uri]::UnescapeDataString(
               $sourcePath
           )
 
-
           $sourcePath = $sourcePath.Replace('\', '/')
-
           $sourcePath = $sourcePath.Trim('/')
-
 
           if (-not $sourcePath) {
               throw 'Unable to determine source Artifactory path.'
           }
 
-
-          # ======================================================
-          # DETERMINE SOURCE ROOT FOLDER
-          #
-          # Example:
-          #
-          # rvtm-vw-rvt-scout-build-binaries-clone/
-          # CW29 (OTA 2026.27.100)
-          #
-          # sourceRoot:
-          #
-          # CW29 (OTA 2026.27.100)
-          # ======================================================
-
           $sourceParts = $sourcePath.Split('/')
-
 
           if ($sourceParts.Count -lt 2) {
               throw 'Source URL must point to a folder inside a repository.'
           }
 
+          $sourceRepository = $sourceParts[0]
 
           $sourceRoot = $sourceParts[
               $sourceParts.Count - 1
           ]
 
-
-          if (-not $sourceRoot) {
-              throw 'Could not determine source root folder.'
+          if (-not $sourceRepository) {
+              throw 'Unable to determine source repository.'
           }
 
-
-          # ======================================================
-          # TARGET
-          # ======================================================
+          if (-not $sourceRoot) {
+              throw 'Unable to determine source root folder.'
+          }
 
           $targetPosition = $targetUri.AbsolutePath.IndexOf(
               $marker,
               [System.StringComparison]::OrdinalIgnoreCase
           )
 
-
           if ($targetPosition -lt 0) {
               throw 'Target URL must contain /artifactory/.'
           }
-
 
           $targetBase = $targetUri.AbsolutePath.Substring(
               $targetPosition + $marker.Length
           )
 
-
           $targetBase = [System.Uri]::UnescapeDataString(
               $targetBase
           )
 
-
           $targetBase = $targetBase.Replace('\', '/')
-
           $targetBase = $targetBase.Trim('/')
-
 
           if (-not $targetBase) {
               throw 'Unable to determine target Artifactory path.'
           }
 
-
-          # ======================================================
-          # FINAL TARGET
-          #
-          # Automatically create source folder at target.
-          #
-          # Source:
-          #
-          # CW29 (OTA 2026.27.100)
-          #
-          # Target input:
-          #
-          # eeint2-Scout-FVP-Release
-          #
-          # Final:
-          #
-          # eeint2-Scout-FVP-Release/
-          # CW29 (OTA 2026.27.100)
-          # ======================================================
-
           $targetParts = $targetBase.Split('/')
+
+          $targetRepository = $targetParts[0]
 
           $targetLastFolder = $targetParts[
               $targetParts.Count - 1
           ]
 
+          if (-not $targetRepository) {
+              throw 'Unable to determine target repository.'
+          }
 
           if ($targetLastFolder -eq $sourceRoot) {
-
               $finalTarget = $targetBase
-
           }
           else {
-
               $finalTarget = "$targetBase/$sourceRoot"
-
           }
-
-
-          # ======================================================
-          # VALIDATION
-          # ======================================================
 
           if ($sourcePath.Contains('..')) {
               throw 'Source path cannot contain ..'
           }
 
-          if ($targetBase.Contains('..')) {
+          if ($finalTarget.Contains('..')) {
               throw 'Target path cannot contain ..'
           }
 
@@ -393,32 +306,40 @@ jobs:
               throw 'Source and target paths cannot be identical.'
           }
 
+          $sourcePattern = "$sourcePath/(*)"
+          $targetPattern = "$finalTarget/{1}"
 
-          # ======================================================
-          # DISPLAY CALCULATED PATHS
-          # ======================================================
+          Write-Host 'Scout direct copy configuration'
 
-          Write-Host 'SCOUT DIRECT COPY'
+          Write-Host 'Source repository:'
+          Write-Host $sourceRepository
 
-          Write-Host 'Source:'
-          Write-Host "$sourcePath/"
+          Write-Host 'Source path:'
+          Write-Host $sourcePath
 
           Write-Host 'Source root folder:'
           Write-Host $sourceRoot
 
+          Write-Host 'Source copy pattern:'
+          Write-Host $sourcePattern
+
+          Write-Host 'Target repository:'
+          Write-Host $targetRepository
+
           Write-Host 'Target base:'
-          Write-Host "$targetBase/"
+          Write-Host $targetBase
 
           Write-Host 'Final target:'
-          Write-Host "$finalTarget/"
+          Write-Host $finalTarget
 
-          Write-Host 'Local temp:'
-          Write-Host 'Not used'
+          Write-Host 'Target copy pattern:'
+          Write-Host $targetPattern
 
-
-          # ======================================================
-          # OUTPUTS
-          # ======================================================
+          "source_repository=$sourceRepository" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
 
           "source_path=$sourcePath" |
             Out-File `
@@ -426,13 +347,23 @@ jobs:
               -Encoding utf8 `
               -Append
 
-
           "source_root=$sourceRoot" |
             Out-File `
               -FilePath $env:GITHUB_OUTPUT `
               -Encoding utf8 `
               -Append
 
+          "source_pattern=$sourcePattern" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+          "target_repository=$targetRepository" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
 
           "target_base=$targetBase" |
             Out-File `
@@ -440,30 +371,31 @@ jobs:
               -Encoding utf8 `
               -Append
 
-
           "final_target=$finalTarget" |
             Out-File `
               -FilePath $env:GITHUB_OUTPUT `
               -Encoding utf8 `
               -Append
 
+          "target_pattern=$targetPattern" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
 
       # ==========================================================
-      # 8. VERIFY SOURCE EXISTS
+      # 7. VERIFY SOURCE ARTIFACTS
       # ==========================================================
 
       - name: Verify Source Artifacts
         shell: pwsh
-
         run: |
           $ErrorActionPreference = 'Stop'
 
           $sourcePath = '${{ steps.paths.outputs.source_path }}'
 
-
-          Write-Host 'Checking Scout source:'
+          Write-Host 'Searching Scout source:'
           Write-Host "$sourcePath/*"
-
 
           jf rt search `
             "$sourcePath/*" `
@@ -472,109 +404,101 @@ jobs:
             --include-dirs=false `
             --fail-no-op=true
 
-
           if ($LASTEXITCODE -ne 0) {
-              throw 'No artifacts were found under the Scout source folder.'
+              throw 'No Scout source artifacts were found.'
           }
 
-
       # ==========================================================
-      # 9. PREVIEW DIRECT COPY
+      # 8. PREVIEW ARTIFACT-LEVEL COPY
+      #
+      # The capture pattern matches every artifact beneath the
+      # selected source folder.
+      #
+      # {1} reproduces the complete relative artifact path beneath
+      # the final target.
       # ==========================================================
 
-      - name: Preview Direct Copy
+      - name: Preview Artifact Level Copy
         shell: pwsh
-
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $sourcePath = '${{ steps.paths.outputs.source_path }}'
+          $sourcePattern = '${{ steps.paths.outputs.source_pattern }}'
+          $targetPattern = '${{ steps.paths.outputs.target_pattern }}'
 
-          $finalTarget = '${{ steps.paths.outputs.final_target }}'
+          Write-Host 'Previewing Scout artifact-level copy'
 
+          Write-Host 'Source pattern:'
+          Write-Host $sourcePattern
 
-          Write-Host 'DIRECT COPY PREVIEW'
-
-          Write-Host 'FROM:'
-          Write-Host $sourcePath
-
-          Write-Host 'TO:'
-          Write-Host $finalTarget
-
+          Write-Host 'Target pattern:'
+          Write-Host $targetPattern
 
           jf rt copy `
-            "$sourcePath" `
-            "$finalTarget" `
+            "$sourcePattern" `
+            "$targetPattern" `
             --server-id="$env:SCOUT_SERVER_ID" `
             --recursive=true `
             --flat=true `
-            --threads=8 `
+            --threads=4 `
             --dry-run
 
-
           if ($LASTEXITCODE -ne 0) {
-              throw 'Scout direct copy preview failed.'
+              throw 'Scout artifact-level copy preview failed.'
           }
 
-
       # ==========================================================
-      # 10. DIRECT SCOUT COPY
+      # 9. COPY ARTIFACTS DIRECTLY
+      #
+      # No local temp folder.
+      # No download.
+      # No upload.
       # ==========================================================
 
       - name: Copy Scout Artifacts
         shell: pwsh
-
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $sourcePath = '${{ steps.paths.outputs.source_path }}'
+          $sourcePattern = '${{ steps.paths.outputs.source_pattern }}'
+          $targetPattern = '${{ steps.paths.outputs.target_pattern }}'
 
-          $finalTarget = '${{ steps.paths.outputs.final_target }}'
+          Write-Host 'Starting Scout artifact-level copy'
 
+          Write-Host 'Source pattern:'
+          Write-Host $sourcePattern
 
-          Write-Host 'DIRECT SCOUT COPY'
-
-          Write-Host 'FROM:'
-          Write-Host $sourcePath
-
-          Write-Host 'TO:'
-          Write-Host $finalTarget
-
+          Write-Host 'Target pattern:'
+          Write-Host $targetPattern
 
           jf rt copy `
-            "$sourcePath" `
-            "$finalTarget" `
+            "$sourcePattern" `
+            "$targetPattern" `
             --server-id="$env:SCOUT_SERVER_ID" `
             --recursive=true `
             --flat=true `
-            --threads=8 `
+            --threads=4 `
             --fail-no-op=true
 
-
           if ($LASTEXITCODE -ne 0) {
-              throw 'Scout direct repository copy failed.'
+              throw 'Scout direct artifact copy failed.'
           }
 
-
-          Write-Host 'Scout direct copy completed.'
-
+          Write-Host 'Scout artifact-level copy completed.'
 
       # ==========================================================
-      # 11. VERIFY TARGET
+      # 10. VERIFY TARGET
       # ==========================================================
 
       - name: Verify Target Artifacts
         shell: pwsh
-
         run: |
           $ErrorActionPreference = 'Stop'
 
           $finalTarget = '${{ steps.paths.outputs.final_target }}'
 
-
-          Write-Host 'Checking target:'
+          Write-Host 'Verifying Scout target:'
           Write-Host "$finalTarget/*"
-
 
           jf rt search `
             "$finalTarget/*" `
@@ -583,25 +507,21 @@ jobs:
             --include-dirs=false `
             --fail-no-op=true
 
-
           if ($LASTEXITCODE -ne 0) {
               throw 'Scout target verification failed.'
           }
 
-
           Write-Host 'Scout target verified.'
 
-
       # ==========================================================
-      # 12. SUMMARY
+      # 11. SUMMARY
       # ==========================================================
 
       - name: Transfer Summary
         if: success()
         shell: pwsh
-
         run: |
-          Write-Host 'SCOUT DIRECT COPY COMPLETE'
+          Write-Host 'Scout direct copy completed successfully.'
 
           Write-Host 'Source URL:'
           Write-Host '${{ inputs.source_url }}'
@@ -613,24 +533,25 @@ jobs:
           Write-Host '${{ steps.paths.outputs.source_root }}'
 
           Write-Host 'Final target:'
-          Write-Host '${{ steps.paths.outputs.final_target }}/'
+          Write-Host '${{ steps.paths.outputs.final_target }}'
 
           Write-Host 'Transfer method:'
-          Write-Host 'JFrog direct copy'
+          Write-Host 'JFrog artifact-level copy'
+
+          Write-Host 'Threads:'
+          Write-Host '4'
 
           Write-Host 'Local staging:'
           Write-Host 'Not used'
 
-
       # ==========================================================
-      # 13. CLEANUP
+      # 12. CLEANUP
       # ==========================================================
 
       - name: Cleanup Scout Configuration
         if: always()
         shell: pwsh
         continue-on-error: true
-
         run: |
           jf c rm "$env:SCOUT_SERVER_ID" --quiet
 
