@@ -305,175 +305,180 @@ jobs:
           $sourceSearchPattern = "$sourceArtifactPath/*"
 
           $targetPath = (
-    *         "$env:TARGET_REPOSITORY/"*+
-              "$destinationFolde*"
+              "$env:TARGET_REPOSITORY/" +
+              "$destinationFolder"
           )
 
-          Write-Hos* 'Migration paths'
+          Write-Host 'Migration paths'
 
-          Writ*-Host 'Source repository:'
-       *  Write-Host $sourceRepository
+          Write-Host 'Source repository:'
+          Write-Host $sourceRepository
 
-  *       Write-Host 'Source relative*path:'
-          Write-Host $sourc*RelativePath
+          Write-Host 'Source relative path:'
+          Write-Host $sourceRelativePath
 
-          Write-Host*'Source search pattern:'
-         *Write-Host $sourceSearchPattern
+          Write-Host 'Source search pattern:'
+          Write-Host $sourceSearchPattern
 
- *        Write-Host 'Scout target:'*          Write-Host $targetPath
+          Write-Host 'Scout target:'
+          Write-Host $targetPath
 
-*         "source_repository=$sourc*Repository" |
-            Out-File*`
-              -FilePath $env:GIT*UB_OUTPUT `
-              -Encodin* utf8 `
-              -Append
-
-   *      "source_relative_path=$sourc*RelativePath" |
-            Out-Fi*e `
-              -FilePath $env:G*THUB_OUTPUT `
-              -Encod*ng utf8 `
-              -Append
-
- *        "source_artifact_path=$sou*ceArtifactPath" |
-            Out-*ile `
-              -FilePath $env*GITHUB_OUTPUT `
-              -Enc*ding utf8 `
-              -Append
-*          "source_search_pattern=$*ourceSearchPattern" |
-            *ut-File `
-              -FilePath *env:GITHUB_OUTPUT `
-              *Encoding utf8 `
-              -App*nd
-
-          "target_path=$target*ath" |
+          "source_repository=$sourceRepository" |
             Out-File `
-    *         -FilePath $env:GITHUB_OUT*UT `
-              -Encoding utf8 *
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
               -Append
 
-      # ==*==================================*====================
-      # 8. VE*IFY VWG SOURCE
-      # ===========*==================================*===========
+          "source_relative_path=$sourceRelativePath" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
 
-      - name: Verify *WG Source Artifacts
-        shell:*pwsh
+          "source_artifact_path=$sourceArtifactPath" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+          "source_search_pattern=$sourceSearchPattern" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+          "target_path=$targetPath" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+      # ==========================================================
+      # 8. VERIFY VWG SOURCE
+      # ==========================================================
+
+      - name: Verify VWG Source Artifacts
+        shell: pwsh
         env:
-          SOURCE*SEARCH_PATTERN: ${{ steps.paths.ou*puts.source_search_pattern }}
-    *   run: |
-          $ErrorActionPr*ference = 'Stop'
+          SOURCE_SEARCH_PATTERN: ${{ steps.paths.outputs.source_search_pattern }}
+        run: |
+          $ErrorActionPreference = 'Stop'
 
-          Write-*ost 'Searching VWG source:'
-      *   Write-Host $env:SOURCE_SEARCH_P*TTERN
+          Write-Host 'Searching VWG source:'
+          Write-Host $env:SOURCE_SEARCH_PATTERN
 
           jf rt search `
-  *         "$env:SOURCE_SEARCH_PATTE*N" `
-            --server-id="$env*SOURCE_SERVER_ID" `
-            --*ecursive=true `
-            --incl*de-dirs=false `
-            --fail*no-op=true
+            "$env:SOURCE_SEARCH_PATTERN" `
+            --server-id="$env:SOURCE_SERVER_ID" `
+            --recursive=true `
+            --include-dirs=false `
+            --fail-no-op=true
 
-          if ($LASTEXI*CODE -ne 0) {
-              throw *No artifacts were found under the *WG source folder.'
+          if ($LASTEXITCODE -ne 0) {
+              throw 'No artifacts were found under the VWG source folder.'
           }
 
-  *   # =============================*============================
-     *# 9. CLEAN TEMP FOLDER
-      # ===*==================================*===================
+      # ==========================================================
+      # 9. CLEAN TEMP FOLDER
+      # ==========================================================
 
-      - name:*Clean Migration Temp Folder
-      * shell: pwsh
+      - name: Clean Migration Temp Folder
+        shell: pwsh
         run: |
-      *   $ErrorActionPreference = 'Stop'*
-          if (Test-Path -LiteralP*th $env:TEMP_FOLDER) {
-           *  Remove-Item `
-                -L*teralPath $env:TEMP_FOLDER `
-     *          -Recurse `
-             *  -Force
+          $ErrorActionPreference = 'Stop'
+
+          if (Test-Path -LiteralPath $env:TEMP_FOLDER) {
+              Remove-Item `
+                -LiteralPath $env:TEMP_FOLDER `
+                -Recurse `
+                -Force
           }
 
-          Ne*-Item `
-            -ItemType Dire*tory `
-            -Path $env:TEMP*FOLDER `
+          New-Item `
+            -ItemType Directory `
+            -Path $env:TEMP_FOLDER `
             -Force |
-    *       Out-Null
+            Out-Null
 
-          Write-H*st 'Migration temp folder:'
-      *   Write-Host $env:TEMP_FOLDER
+          Write-Host 'Migration temp folder:'
+          Write-Host $env:TEMP_FOLDER
 
-  *   # =============================*============================
-     *# 10. DOWNLOAD FROM VWG
+      # ==========================================================
+      # 10. DOWNLOAD FROM VWG
       #
-  *   # flat=false preserves the full*Artifactory hierarchy.
-      # The*correct selected subtree is locate* in the next step.
-      # =======*==================================*===============
+      # flat=false preserves the full Artifactory hierarchy.
+      # The correct selected subtree is located in the next step.
+      # ==========================================================
 
-      - name: Dow*load VWG Artifacts
-        shell: *wsh
+      - name: Download VWG Artifacts
+        shell: pwsh
         env:
-          SOURCE_*EARCH_PATTERN: ${{ steps.paths.out*uts.source_search_pattern }}
-     *  run: |
-          $ErrorActionPre*erence = 'Stop'
+          SOURCE_SEARCH_PATTERN: ${{ steps.paths.outputs.source_search_pattern }}
+        run: |
+          $ErrorActionPreference = 'Stop'
 
-          Write-H*st 'Downloading VWG artifacts'
+          Write-Host 'Downloading VWG artifacts'
 
-  *       Write-Host 'Source:'
-      *   Write-Host $env:SOURCE_SEARCH_P*TTERN
+          Write-Host 'Source:'
+          Write-Host $env:SOURCE_SEARCH_PATTERN
 
-          Write-Host 'Local*destination:'
-          Write-Host*$env:TEMP_FOLDER
+          Write-Host 'Local destination:'
+          Write-Host $env:TEMP_FOLDER
 
-          jf rt *ownload `
-            "$env:SOURCE*SEARCH_PATTERN" `
-            "$en*:TEMP_FOLDER/" `
-            --ser*er-id="$env:SOURCE_SERVER_ID" `
-  *         --recursive=true `
-      *     --flat=false `
-            --*nclude-dirs=true `
-            --f*il-no-op=true `
-            --thre*ds=8
+          jf rt download `
+            "$env:SOURCE_SEARCH_PATTERN" `
+            "$env:TEMP_FOLDER/" `
+            --server-id="$env:SOURCE_SERVER_ID" `
+            --recursive=true `
+            --flat=false `
+            --include-dirs=true `
+            --fail-no-op=true `
+            --threads=8
 
-          if ($LASTEXITCODE *ne 0) {
-              throw 'VWG a*tifact download failed.'
-         *}
+          if ($LASTEXITCODE -ne 0) {
+              throw 'VWG artifact download failed.'
+          }
 
-          Write-Host 'VWG downl*ad completed.'
+          Write-Host 'VWG download completed.'
 
-      # ==========*==================================*============
-      # 11. LOCATE DO*NLOADED SOURCE SUBTREE
-      # ===*==================================*===================
+      # ==========================================================
+      # 11. LOCATE DOWNLOADED SOURCE SUBTREE
+      # ==========================================================
 
-      - name:*Locate Downloaded Source Folder
-  *     id: local
-        shell: pwsh*        env:
-          SOURCE_REPO*ITORY: ${{ steps.paths.outputs.sou*ce_repository }}
-          SOURCE_*ELATIVE_PATH: ${{ steps.paths.outp*ts.source_relative_path }}
-       *run: |
-          $ErrorActionPrefe*ence = 'Stop'
+      - name: Locate Downloaded Source Folder
+        id: local
+        shell: pwsh
+        env:
+          SOURCE_REPOSITORY: ${{ steps.paths.outputs.source_repository }}
+          SOURCE_RELATIVE_PATH: ${{ steps.paths.outputs.source_relative_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
 
-          $windowsR*lativePath = $env:SOURCE_RELATIVE_*ATH.Replace(
+          $windowsRelativePath = $env:SOURCE_RELATIVE_PATH.Replace(
               '/',
-  *           '\'
+              '\'
           )
 
-      *   $candidateWithRepository = Join*Path `
-            -Path $env:TEMP*FOLDER `
-            -ChildPath "$*nv:SOURCE_REPOSITORY\$windowsRelat*vePath"
+          $candidateWithRepository = Join-Path `
+            -Path $env:TEMP_FOLDER `
+            -ChildPath "$env:SOURCE_REPOSITORY\$windowsRelativePath"
 
-          $candidateWitho*tRepository = Join-Path `
-        *   -Path $env:TEMP_FOLDER `
-      *     -ChildPath $windowsRelativePa*h
+          $candidateWithoutRepository = Join-Path `
+            -Path $env:TEMP_FOLDER `
+            -ChildPath $windowsRelativePath
 
           $localSource = $null
-*          if (Test-Path -LiteralPa*h $candidateWithRepository) {
-    *         $localSource = $candidate*ithRepository
-          }
-        * elseif (Test-Path -LiteralPath $c*ndidateWithoutRepository) {
-      *       $localSource = $candidateWi*houtRepository
-          }
-       *  else {
-              Write-Host *Downloaded directory tree:'
 
-     *        Get-ChildItem `
+          if (Test-Path -LiteralPath $candidateWithRepository) {
+              $localSource = $candidateWithRepository
+          }
+          elseif (Test-Path -LiteralPath $candidateWithoutRepository) {
+              $localSource = $candidateWithoutRepository
+          }
+          else {
+              Write-Host 'Downloaded directory tree:'
+
+              Get-ChildItem `
                 -LiteralPath $env:TEMP_FOLDER `
                 -Recurse |
                 ForEach-Object {
