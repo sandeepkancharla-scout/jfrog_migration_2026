@@ -12,7 +12,7 @@ on:
         type: string
 
       target_url:
-        description: "Full Scout JFrog target repository/folder URL"
+        description: "Full Scout JFrog target repository URL"
         required: true
         type: string
 
@@ -51,10 +51,14 @@ jobs:
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v4
+
         with:
           disable-auto-build-publish: true
+
         env:
+
           JF_URL: ${{ secrets.TARGET_URL }}
+
           JF_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
 
 
@@ -64,6 +68,7 @@ jobs:
 
       - name: Show JFrog CLI Version
         shell: pwsh
+
         run: |
 
           $ErrorActionPreference = "Stop"
@@ -113,11 +118,12 @@ jobs:
 
 
       # ==========================================================
-      # 4. CLEAN OLD CONFIG
+      # 4. CLEAN PREVIOUS CONFIG
       # ==========================================================
 
       - name: Cleanup Existing Config
         shell: pwsh
+
         continue-on-error: true
 
         run: |
@@ -158,7 +164,7 @@ jobs:
 
 
       # ==========================================================
-      # 6. TEST CONNECTION
+      # 6. VERIFY CONNECTION
       # ==========================================================
 
       - name: Verify Scout Connection
@@ -167,6 +173,11 @@ jobs:
         run: |
 
           $ErrorActionPreference = "Stop"
+
+
+          Write-Host ""
+
+          Write-Host "Checking Scout Artifactory..."
 
 
           jf rt ping `
@@ -180,15 +191,18 @@ jobs:
           }
 
 
+          Write-Host ""
+
           Write-Host "Scout connection OK."
 
 
       # ==========================================================
-      # 7. PARSE SOURCE AND TARGET URL
+      # 7. PARSE SOURCE AND TARGET URLS
       # ==========================================================
 
       - name: Parse Source and Target URLs
         id: paths
+
         shell: pwsh
 
         env:
@@ -223,7 +237,7 @@ jobs:
 
 
           # ------------------------------------------------------
-          # Parse URLs
+          # PARSE URLS
           # ------------------------------------------------------
 
           try {
@@ -266,10 +280,16 @@ jobs:
 
 
           # ------------------------------------------------------
-          # Verify both URLs belong to Scout
+          # BOTH URLS MUST BELONG TO SAME SCOUT ARTIFACTORY
           # ------------------------------------------------------
 
           if ($sourceUri.Host -ne $scoutUri.Host) {
+
+              Write-Host "Source host:"
+              Write-Host "$($sourceUri.Host)"
+
+              Write-Host "Configured Scout host:"
+              Write-Host "$($scoutUri.Host)"
 
               throw "Source URL is not from Scout Artifactory."
 
@@ -277,6 +297,12 @@ jobs:
 
 
           if ($targetUri.Host -ne $scoutUri.Host) {
+
+              Write-Host "Target host:"
+              Write-Host "$($targetUri.Host)"
+
+              Write-Host "Configured Scout host:"
+              Write-Host "$($scoutUri.Host)"
 
               throw "Target URL is not from Scout Artifactory."
 
@@ -287,9 +313,9 @@ jobs:
               "/artifactory/"
 
 
-          # ------------------------------------------------------
-          # Parse SOURCE
-          # ------------------------------------------------------
+          # ======================================================
+          # SOURCE
+          # ======================================================
 
           $sourcePosition =
               $sourceUri.AbsolutePath.IndexOf(
@@ -335,20 +361,18 @@ jobs:
           }
 
 
-          # ------------------------------------------------------
-          # Determine selected ROOT folder.
+          # ======================================================
+          # DETERMINE SOURCE ROOT FOLDER
           #
           # Example:
           #
-          # source path:
-          #
-          # rvtm-vw-rvt-scout-build-binaries-clone/
+          # repository/
           # CW29 (OTA 2026.27.100)
           #
-          # source root:
+          # Root:
           #
           # CW29 (OTA 2026.27.100)
-          # ------------------------------------------------------
+          # ======================================================
 
           $sourceParts =
               $sourcePath.Split("/")
@@ -356,27 +380,27 @@ jobs:
 
           if ($sourceParts.Count -lt 2) {
 
-              throw "Source URL must point to a folder inside a repository."
+              throw "Source URL must point to a folder inside the repository."
 
           }
 
 
-          $sourceRootFolder =
+          $sourceRoot =
               $sourceParts[
                   $sourceParts.Count - 1
               ]
 
 
-          if (-not $sourceRootFolder) {
+          if (-not $sourceRoot) {
 
               throw "Could not determine source root folder."
 
           }
 
 
-          # ------------------------------------------------------
-          # Parse TARGET
-          # ------------------------------------------------------
+          # ======================================================
+          # TARGET
+          # ======================================================
 
           $targetPosition =
               $targetUri.AbsolutePath.IndexOf(
@@ -392,62 +416,87 @@ jobs:
           }
 
 
-          $targetBasePath =
+          $targetBase =
               $targetUri.AbsolutePath.Substring(
                   $targetPosition + $marker.Length
               )
 
 
-          $targetBasePath =
+          $targetBase =
               [System.Uri]::UnescapeDataString(
-                  $targetBasePath
+                  $targetBase
               )
 
 
-          $targetBasePath =
-              $targetBasePath.Replace(
+          $targetBase =
+              $targetBase.Replace(
                   "\",
                   "/"
               )
 
 
-          $targetBasePath =
-              $targetBasePath.Trim("/")
+          $targetBase =
+              $targetBase.Trim("/")
 
 
-          if (-not $targetBasePath) {
+          if (-not $targetBase) {
 
-              throw "Could not determine target path."
+              throw "Could not determine target repository."
 
           }
 
 
-          # ------------------------------------------------------
-          # Automatically add source root folder to target.
+          # ======================================================
+          # FINAL TARGET
           #
-          # Example:
+          # Automatically append source root.
           #
-          # target:
+          # TARGET INPUT:
           #
-          # eeint2-Scout-FVP-Release
+          # eeint2-Scout-FVP-Release/
           #
-          # source root:
+          # SOURCE ROOT:
           #
           # CW29 (OTA 2026.27.100)
           #
-          # final:
+          # FINAL:
           #
           # eeint2-Scout-FVP-Release/
           # CW29 (OTA 2026.27.100)
-          # ------------------------------------------------------
+          # ======================================================
 
-          $finalTargetPath =
-              "$targetBasePath/$sourceRootFolder"
+          $finalTarget =
+              "$targetBase/$sourceRoot"
 
 
-          # ------------------------------------------------------
-          # Display calculated paths
-          # ------------------------------------------------------
+          # ======================================================
+          # VALIDATE PATHS
+          # ======================================================
+
+          if ($sourcePath.Contains("..")) {
+
+              throw "Source path cannot contain '..'."
+
+          }
+
+
+          if ($targetBase.Contains("..")) {
+
+              throw "Target path cannot contain '..'."
+
+          }
+
+
+          if ($sourcePath -eq $finalTarget) {
+
+              throw "Source and target cannot be the same path."
+
+          }
+
+
+          # ======================================================
+          # OUTPUT INFORMATION
+          # ======================================================
 
           Write-Host ""
 
@@ -471,9 +520,9 @@ jobs:
 
           Write-Host ""
 
-          Write-Host "SOURCE ROOT FOLDER"
+          Write-Host "SOURCE ROOT"
 
-          Write-Host "$sourceRootFolder"
+          Write-Host "$sourceRoot"
 
           Write-Host ""
 
@@ -485,22 +534,22 @@ jobs:
 
           Write-Host "TARGET BASE"
 
-          Write-Host "$targetBasePath/"
+          Write-Host "$targetBase/"
 
           Write-Host ""
 
           Write-Host "FINAL TARGET"
 
-          Write-Host "$finalTargetPath/"
+          Write-Host "$finalTarget/"
 
           Write-Host ""
 
           Write-Host "============================================"
 
 
-          # ------------------------------------------------------
-          # Outputs
-          # ------------------------------------------------------
+          # ======================================================
+          # GITHUB OUTPUTS
+          # ======================================================
 
           "source_path=$sourcePath" |
             Out-File `
@@ -509,21 +558,21 @@ jobs:
               -Append
 
 
-          "source_root=$sourceRootFolder" |
+          "source_root=$sourceRoot" |
             Out-File `
               "$env:GITHUB_OUTPUT" `
               -Encoding utf8 `
               -Append
 
 
-          "target_base=$targetBasePath" |
+          "target_base=$targetBase" |
             Out-File `
               "$env:GITHUB_OUTPUT" `
               -Encoding utf8 `
               -Append
 
 
-          "final_target=$finalTargetPath" |
+          "final_target=$finalTarget" |
             Out-File `
               "$env:GITHUB_OUTPUT" `
               -Encoding utf8 `
@@ -531,7 +580,7 @@ jobs:
 
 
       # ==========================================================
-      # 8. VERIFY SOURCE
+      # 8. VERIFY SOURCE EXISTS
       # ==========================================================
 
       - name: Verify Source
@@ -548,7 +597,7 @@ jobs:
 
           Write-Host ""
 
-          Write-Host "Searching source:"
+          Write-Host "Checking source:"
 
           Write-Host "$source/*"
 
@@ -565,13 +614,18 @@ jobs:
 
           if ($LASTEXITCODE -ne 0) {
 
-              throw "No artifacts found under source folder."
+              throw "No artifacts found under source."
 
           }
 
 
       # ==========================================================
       # 9. PREVIEW COPY
+      #
+      # IMPORTANT:
+      #
+      # Capture the complete recursive hierarchy BELOW the
+      # selected source root.
       # ==========================================================
 
       - name: Preview Copy
@@ -591,32 +645,40 @@ jobs:
 
 
           # ------------------------------------------------------
-          # Capture everything BELOW CW29.
+          # Ant-style recursive capture.
           #
-          # Example source:
+          # Example:
           #
+          # SOURCE:
+          #
+          # repo/CW29/
+          # vw-group-commit-vault/
+          # hash/
+          # 35689285/
+          # AUTO_V1_0/
+          # zDML/
+          # comms/
+          # file.7z
+          #
+          # CAPTURE:
+          #
+          # vw-group-commit-vault/
+          # hash/
+          # 35689285/
+          # AUTO_V1_0/
+          # zDML/
+          # comms/
+          # file.7z
+          #
+          # TARGET:
+          #
+          # eeint2-Scout-FVP-Release/
           # CW29/
-          # vw-group-commit-vault/
-          # hash/
-          # build/
-          # AUTO_V1_0/
-          # zDML/
-          # comms/
-          # file
-          #
-          # {1} becomes:
-          #
-          # vw-group-commit-vault/
-          # hash/
-          # build/
-          # AUTO_V1_0/
-          # zDML/
-          # comms/
-          # file
+          # {1}
           # ------------------------------------------------------
 
           $sourcePattern =
-              "$source/(*)"
+              "$source/(**)"
 
 
           $targetPattern =
@@ -633,25 +695,31 @@ jobs:
 
           Write-Host ""
 
-          Write-Host "SOURCE"
+          Write-Host "FROM"
 
           Write-Host "$source/"
 
           Write-Host ""
 
-          Write-Host "TARGET"
+          Write-Host "TO"
 
           Write-Host "$target/"
 
           Write-Host ""
 
-          Write-Host "CW29 folder will be created automatically."
+          Write-Host "SOURCE PATTERN"
+
+          Write-Host "$sourcePattern"
 
           Write-Host ""
 
-          Write-Host "All folders beneath CW29 will be preserved."
+          Write-Host "TARGET PATTERN"
+
+          Write-Host "$targetPattern"
 
           Write-Host ""
+
+          Write-Host "============================================"
 
 
           jf rt copy `
@@ -691,7 +759,7 @@ jobs:
 
 
           $sourcePattern =
-              "$source/(*)"
+              "$source/(**)"
 
 
           $targetPattern =
@@ -717,6 +785,10 @@ jobs:
           Write-Host "TO"
 
           Write-Host "$target/"
+
+          Write-Host ""
+
+          Write-Host "Folder structure is being preserved."
 
           Write-Host ""
 
@@ -761,7 +833,7 @@ jobs:
 
           Write-Host ""
 
-          Write-Host "Verifying target:"
+          Write-Host "Checking target:"
 
           Write-Host "$target/*"
 
@@ -794,6 +866,7 @@ jobs:
 
       - name: Transfer Summary
         if: success()
+
         shell: pwsh
 
         run: |
@@ -802,25 +875,25 @@ jobs:
 
           Write-Host "============================================"
 
-          Write-Host "SCOUT JFROG COPY COMPLETED"
+          Write-Host "SCOUT JFROG COPY COMPLETE"
 
           Write-Host "============================================"
 
           Write-Host ""
 
-          Write-Host "SOURCE"
+          Write-Host "SOURCE URL"
 
           Write-Host "${{ inputs.source_url }}"
 
           Write-Host ""
 
-          Write-Host "TARGET"
+          Write-Host "TARGET URL"
 
           Write-Host "${{ inputs.target_url }}"
 
           Write-Host ""
 
-          Write-Host "CREATED FOLDER"
+          Write-Host "COPIED ROOT FOLDER"
 
           Write-Host "${{ steps.paths.outputs.source_root }}"
 
@@ -829,6 +902,12 @@ jobs:
           Write-Host "FINAL TARGET"
 
           Write-Host "${{ steps.paths.outputs.final_target }}/"
+
+          Write-Host ""
+
+          Write-Host "FOLDER STRUCTURE"
+
+          Write-Host "Preserved"
 
           Write-Host ""
 
@@ -841,6 +920,7 @@ jobs:
 
       - name: Cleanup
         if: always()
+
         shell: pwsh
 
         continue-on-error: true
