@@ -1,6 +1,6 @@
 name: Scout JFrog Repo Transfer
 
-run-name: Scout JFrog Direct Copy
+run-name: Scout JFrog Transfer
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   transfer:
-    name: Scout Repository Direct Copy
+    name: Scout Repository Transfer
 
     runs-on:
       - self-hosted
@@ -30,6 +30,9 @@ jobs:
 
     env:
       SCOUT_SERVER_ID: scout-artifactory
+
+      TEMP_FOLDER: C:\Temp\ScoutRepoTransfer
+
       JFROG_CLI_OFFER_CONFIG: "false"
       JFROG_CLI_LOG_LEVEL: INFO
 
@@ -79,10 +82,10 @@ jobs:
           }
 
           Write-Host 'Scout credentials are available.'
-          Write-Host 'TARGET_URL and TARGET_ACCESS_TOKEN will be used for both repositories.'
+          Write-Host 'The same Scout credentials will be used for source and target.'
 
       # ==========================================================
-      # 3. CLEAN EXISTING JFROG CONFIG
+      # 3. CLEAN OLD JFROG CONFIG
       # ==========================================================
 
       - name: Cleanup Existing Scout Config
@@ -116,7 +119,7 @@ jobs:
           Write-Host 'Scout Artifactory configured.'
 
       # ==========================================================
-      # 5. VERIFY CONNECTION
+      # 5. VERIFY SCOUT CONNECTION
       # ==========================================================
 
       - name: Verify Scout Connection
@@ -141,12 +144,14 @@ jobs:
         id: paths
         shell: pwsh
         env:
+          INPUT_SOURCE_URL: ${{ inputs.source_url }}
+          INPUT_TARGET_URL: ${{ inputs.target_url }}
           SCOUT_URL: ${{ secrets.TARGET_URL }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $sourceInput = '${{ inputs.source_url }}'.Trim()
-          $targetInput = '${{ inputs.target_url }}'.Trim()
+          $sourceInput = $env:INPUT_SOURCE_URL.Trim()
+          $targetInput = $env:INPUT_TARGET_URL.Trim()
 
           if (-not $sourceInput) {
               throw 'Source URL is empty.'
@@ -186,26 +191,18 @@ jobs:
           }
 
           if ($sourceUri.Host -ne $scoutUri.Host) {
-              Write-Host 'Source host:'
-              Write-Host $sourceUri.Host
-
-              Write-Host 'Configured Scout host:'
-              Write-Host $scoutUri.Host
-
-              throw 'Source URL is not from configured Scout Artifactory.'
+              throw 'Source URL is not from the configured Scout Artifactory.'
           }
 
           if ($targetUri.Host -ne $scoutUri.Host) {
-              Write-Host 'Target host:'
-              Write-Host $targetUri.Host
-
-              Write-Host 'Configured Scout host:'
-              Write-Host $scoutUri.Host
-
-              throw 'Target URL is not from configured Scout Artifactory.'
+              throw 'Target URL is not from the configured Scout Artifactory.'
           }
 
           $marker = '/artifactory/'
+
+          # ------------------------------------------------------
+          # Source
+          # ------------------------------------------------------
 
           $sourcePosition = $sourceUri.AbsolutePath.IndexOf(
               $marker,
@@ -231,25 +228,41 @@ jobs:
               throw 'Unable to determine source Artifactory path.'
           }
 
-          $sourceParts = $sourcePath.Split('/')
+          $firstSlash = $sourcePath.IndexOf('/')
 
-          if ($sourceParts.Count -lt 2) {
-              throw 'Source URL must point to a folder inside a repository.'
+          if ($firstSlash -lt 1) {
+              throw 'Source URL must contain a repository and folder.'
           }
 
-          $sourceRepository = $sourceParts[0]
+          $sourceRepository = $sourcePath.Substring(
+              0,
+              $firstSlash
+          )
 
-          $sourceRoot = $sourceParts[
-              $sourceParts.Count - 1
-          ]
+          $sourceRelativePath = $sourcePath.Substring(
+              $firstSlash + 1
+          )
 
-          if (-not $sourceRepository) {
-              throw 'Unable to determine source repository.'
+          $sourceRelativePath = $sourceRelativePath.Trim('/')
+
+          if (-not $sourceRelativePath) {
+              throw 'Source URL must point to a folder inside the repository.'
           }
+
+          $sourceParts = $sourceRelativePath.Split(
+              '/',
+              [System.StringSplitOptions]::RemoveEmptyEntries
+          )
+
+          $sourceRoot = $sourceParts[0]
 
           if (-not $sourceRoot) {
               throw 'Unable to determine source root folder.'
           }
+
+          # ------------------------------------------------------
+          # Target
+          # ------------------------------------------------------
 
           $targetPosition = $targetUri.AbsolutePath.IndexOf(
               $marker,
@@ -275,17 +288,22 @@ jobs:
               throw 'Unable to determine target Artifactory path.'
           }
 
-          $targetParts = $targetBase.Split('/')
+          if ($sourcePath.Contains('..')) {
+              throw 'Source path cannot contain ..'
+          }
 
-          $targetRepository = $targetParts[0]
+          if ($targetBase.Contains('..')) {
+              throw 'Target path cannot contain ..'
+          }
+
+          $targetParts = $targetBase.Split(
+              '/',
+              [System.StringSplitOptions]::RemoveEmptyEntries
+          )
 
           $targetLastFolder = $targetParts[
               $targetParts.Count - 1
           ]
-
-          if (-not $targetRepository) {
-              throw 'Unable to determine target repository.'
-          }
 
           if ($targetLastFolder -eq $sourceRoot) {
               $finalTarget = $targetBase
@@ -294,22 +312,13 @@ jobs:
               $finalTarget = "$targetBase/$sourceRoot"
           }
 
-          if ($sourcePath.Contains('..')) {
-              throw 'Source path cannot contain ..'
-          }
-
-          if ($finalTarget.Contains('..')) {
-              throw 'Target path cannot contain ..'
-          }
-
           if ($sourcePath -eq $finalTarget) {
               throw 'Source and target paths cannot be identical.'
           }
 
-          $sourcePattern = "$sourcePath/(*)"
-          $targetPattern = "$finalTarget/{1}"
+          $sourceSearchPattern = "$sourcePath/*"
 
-          Write-Host 'Scout direct copy configuration'
+          Write-Host 'Scout transfer configuration'
 
           Write-Host 'Source repository:'
           Write-Host $sourceRepository
@@ -317,23 +326,17 @@ jobs:
           Write-Host 'Source path:'
           Write-Host $sourcePath
 
-          Write-Host 'Source root folder:'
+          Write-Host 'Source relative path:'
+          Write-Host $sourceRelativePath
+
+          Write-Host 'Root folder:'
           Write-Host $sourceRoot
-
-          Write-Host 'Source copy pattern:'
-          Write-Host $sourcePattern
-
-          Write-Host 'Target repository:'
-          Write-Host $targetRepository
 
           Write-Host 'Target base:'
           Write-Host $targetBase
 
           Write-Host 'Final target:'
           Write-Host $finalTarget
-
-          Write-Host 'Target copy pattern:'
-          Write-Host $targetPattern
 
           "source_repository=$sourceRepository" |
             Out-File `
@@ -347,19 +350,19 @@ jobs:
               -Encoding utf8 `
               -Append
 
+          "source_relative_path=$sourceRelativePath" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
           "source_root=$sourceRoot" |
             Out-File `
               -FilePath $env:GITHUB_OUTPUT `
               -Encoding utf8 `
               -Append
 
-          "source_pattern=$sourcePattern" |
-            Out-File `
-              -FilePath $env:GITHUB_OUTPUT `
-              -Encoding utf8 `
-              -Append
-
-          "target_repository=$targetRepository" |
+          "source_search_pattern=$sourceSearchPattern" |
             Out-File `
               -FilePath $env:GITHUB_OUTPUT `
               -Encoding utf8 `
@@ -377,28 +380,22 @@ jobs:
               -Encoding utf8 `
               -Append
 
-          "target_pattern=$targetPattern" |
-            Out-File `
-              -FilePath $env:GITHUB_OUTPUT `
-              -Encoding utf8 `
-              -Append
-
       # ==========================================================
       # 7. VERIFY SOURCE ARTIFACTS
       # ==========================================================
 
       - name: Verify Source Artifacts
         shell: pwsh
+        env:
+          SOURCE_SEARCH_PATTERN: ${{ steps.paths.outputs.source_search_pattern }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $sourcePath = '${{ steps.paths.outputs.source_path }}'
-
           Write-Host 'Searching Scout source:'
-          Write-Host "$sourcePath/*"
+          Write-Host $env:SOURCE_SEARCH_PATTERN
 
           jf rt search `
-            "$sourcePath/*" `
+            "$env:SOURCE_SEARCH_PATTERN" `
             --server-id="$env:SCOUT_SERVER_ID" `
             --recursive=true `
             --include-dirs=false `
@@ -409,99 +406,278 @@ jobs:
           }
 
       # ==========================================================
-      # 8. PREVIEW ARTIFACT-LEVEL COPY
-      #
-      # The capture pattern matches every artifact beneath the
-      # selected source folder.
-      #
-      # {1} reproduces the complete relative artifact path beneath
-      # the final target.
+      # 8. CLEAN TEMP LOCATION
       # ==========================================================
 
-      - name: Preview Artifact Level Copy
+      - name: Clean Local Temp Folder
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $sourcePattern = '${{ steps.paths.outputs.source_pattern }}'
-          $targetPattern = '${{ steps.paths.outputs.target_pattern }}'
-
-          Write-Host 'Previewing Scout artifact-level copy'
-
-          Write-Host 'Source pattern:'
-          Write-Host $sourcePattern
-
-          Write-Host 'Target pattern:'
-          Write-Host $targetPattern
-
-          jf rt copy `
-            "$sourcePattern" `
-            "$targetPattern" `
-            --server-id="$env:SCOUT_SERVER_ID" `
-            --recursive=true `
-            --flat=true `
-            --threads=4 `
-            --dry-run
-
-          if ($LASTEXITCODE -ne 0) {
-              throw 'Scout artifact-level copy preview failed.'
+          if (Test-Path -LiteralPath $env:TEMP_FOLDER) {
+              Remove-Item `
+                -LiteralPath $env:TEMP_FOLDER `
+                -Recurse `
+                -Force
           }
 
+          New-Item `
+            -ItemType Directory `
+            -Path $env:TEMP_FOLDER `
+            -Force |
+            Out-Null
+
+          Write-Host 'Local temporary location:'
+          Write-Host $env:TEMP_FOLDER
+
       # ==========================================================
-      # 9. COPY ARTIFACTS DIRECTLY
+      # 9. DOWNLOAD SOURCE TO LOCAL TEMP
       #
-      # No local temp folder.
-      # No download.
-      # No upload.
+      # flat=false intentionally keeps the source hierarchy.
       # ==========================================================
 
-      - name: Copy Scout Artifacts
+      - name: Download Scout Source
         shell: pwsh
+        env:
+          SOURCE_SEARCH_PATTERN: ${{ steps.paths.outputs.source_search_pattern }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $sourcePattern = '${{ steps.paths.outputs.source_pattern }}'
-          $targetPattern = '${{ steps.paths.outputs.target_pattern }}'
+          Write-Host 'Downloading Scout source artifacts'
 
-          Write-Host 'Starting Scout artifact-level copy'
+          Write-Host 'Source:'
+          Write-Host $env:SOURCE_SEARCH_PATTERN
 
-          Write-Host 'Source pattern:'
-          Write-Host $sourcePattern
+          Write-Host 'Temporary location:'
+          Write-Host $env:TEMP_FOLDER
 
-          Write-Host 'Target pattern:'
-          Write-Host $targetPattern
-
-          jf rt copy `
-            "$sourcePattern" `
-            "$targetPattern" `
+          jf rt download `
+            "$env:SOURCE_SEARCH_PATTERN" `
+            "$env:TEMP_FOLDER/" `
             --server-id="$env:SCOUT_SERVER_ID" `
             --recursive=true `
-            --flat=true `
+            --flat=false `
+            --include-dirs=true `
+            --fail-no-op=true `
             --threads=4 `
-            --fail-no-op=true
+            --retries=3 `
+            --retry-wait-time=5s
 
           if ($LASTEXITCODE -ne 0) {
-              throw 'Scout direct artifact copy failed.'
+              throw 'Scout artifact download failed.'
           }
 
-          Write-Host 'Scout artifact-level copy completed.'
+          Write-Host 'Scout download completed.'
 
       # ==========================================================
-      # 10. VERIFY TARGET
+      # 10. LOCATE THE SELECTED SOURCE DIRECTORY LOCALLY
+      #
+      # This removes the repository/path prefix from the eventual
+      # target without flattening anything below the selected root.
+      # ==========================================================
+
+      - name: Locate Local Source
+        id: local
+        shell: pwsh
+        env:
+          SOURCE_REPOSITORY: ${{ steps.paths.outputs.source_repository }}
+          SOURCE_RELATIVE_PATH: ${{ steps.paths.outputs.source_relative_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $windowsRelativePath = $env:SOURCE_RELATIVE_PATH.Replace(
+              '/',
+              '\'
+          )
+
+          $candidateWithRepo = Join-Path `
+            -Path $env:TEMP_FOLDER `
+            -ChildPath "$env:SOURCE_REPOSITORY\$windowsRelativePath"
+
+          $candidateWithoutRepo = Join-Path `
+            -Path $env:TEMP_FOLDER `
+            -ChildPath $windowsRelativePath
+
+          $localSource = $null
+
+          if (Test-Path -LiteralPath $candidateWithRepo) {
+              $localSource = $candidateWithRepo
+          }
+          elseif (Test-Path -LiteralPath $candidateWithoutRepo) {
+              $localSource = $candidateWithoutRepo
+          }
+          else {
+              Write-Host 'Downloaded directory structure:'
+
+              Get-ChildItem `
+                -LiteralPath $env:TEMP_FOLDER `
+                -Recurse |
+                ForEach-Object {
+                    Write-Host $_.FullName
+                }
+
+              throw 'Unable to locate downloaded source folder.'
+          }
+
+          $files = @(
+              Get-ChildItem `
+                -LiteralPath $localSource `
+                -Recurse `
+                -File
+          )
+
+          if ($files.Count -eq 0) {
+              throw 'Downloaded source folder contains no files.'
+          }
+
+          Write-Host 'Local source:'
+          Write-Host $localSource
+
+          Write-Host 'File count:'
+          Write-Host $files.Count
+
+          "local_source=$localSource" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+          "file_count=$($files.Count)" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+      # ==========================================================
+      # 11. SHOW LOCAL STRUCTURE
+      # ==========================================================
+
+      - name: Show Local Structure
+        shell: pwsh
+        env:
+          LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host 'Structure that will be uploaded:'
+
+          Get-ChildItem `
+            -LiteralPath $env:LOCAL_SOURCE `
+            -Recurse `
+            -File |
+            ForEach-Object {
+                $relative = $_.FullName.Substring(
+                    $env:LOCAL_SOURCE.Length
+                )
+
+                $relative = $relative.TrimStart('\')
+
+                Write-Host $relative
+            }
+
+      # ==========================================================
+      # 12. PREVIEW UPLOAD
+      # ==========================================================
+
+      - name: Preview Scout Upload
+        shell: pwsh
+        env:
+          LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
+          FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host 'Previewing Scout target upload'
+
+          Write-Host 'Local source:'
+          Write-Host $env:LOCAL_SOURCE
+
+          Write-Host 'Scout target:'
+          Write-Host $env:FINAL_TARGET
+
+          Push-Location $env:LOCAL_SOURCE
+
+          try {
+              jf rt upload `
+                './*' `
+                "$env:FINAL_TARGET/" `
+                --server-id="$env:SCOUT_SERVER_ID" `
+                --recursive=true `
+                --flat=false `
+                --dry-run
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw 'Scout upload preview failed.'
+              }
+          }
+          finally {
+              Pop-Location
+          }
+
+      # ==========================================================
+      # 13. UPLOAD TEMP CONTENT TO TARGET
+      #
+      # flat=false keeps the local directory hierarchy.
+      # ==========================================================
+
+      - name: Upload To Scout Target
+        shell: pwsh
+        env:
+          LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
+          FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host 'Uploading artifacts to Scout target'
+
+          Write-Host 'Source:'
+          Write-Host $env:LOCAL_SOURCE
+
+          Write-Host 'Target:'
+          Write-Host $env:FINAL_TARGET
+
+          Push-Location $env:LOCAL_SOURCE
+
+          try {
+              jf rt upload `
+                './*' `
+                "$env:FINAL_TARGET/" `
+                --server-id="$env:SCOUT_SERVER_ID" `
+                --recursive=true `
+                --flat=false `
+                --fail-no-op=true `
+                --threads=4 `
+                --retries=3 `
+                --retry-wait-time=5s
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw 'Scout target upload failed.'
+              }
+          }
+          finally {
+              Pop-Location
+          }
+
+          Write-Host 'Scout target upload completed.'
+
+      # ==========================================================
+      # 14. VERIFY TARGET
       # ==========================================================
 
       - name: Verify Target Artifacts
         shell: pwsh
+        env:
+          FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $finalTarget = '${{ steps.paths.outputs.final_target }}'
+          $targetSearchPattern = "$env:FINAL_TARGET/*"
 
           Write-Host 'Verifying Scout target:'
-          Write-Host "$finalTarget/*"
+          Write-Host $targetSearchPattern
 
           jf rt search `
-            "$finalTarget/*" `
+            "$targetSearchPattern" `
             --server-id="$env:SCOUT_SERVER_ID" `
             --recursive=true `
             --include-dirs=false `
@@ -514,45 +690,58 @@ jobs:
           Write-Host 'Scout target verified.'
 
       # ==========================================================
-      # 11. SUMMARY
+      # 15. SUMMARY
       # ==========================================================
 
       - name: Transfer Summary
         if: success()
         shell: pwsh
+        env:
+          SOURCE_INPUT: ${{ inputs.source_url }}
+          TARGET_INPUT: ${{ inputs.target_url }}
+          SOURCE_ROOT: ${{ steps.paths.outputs.source_root }}
+          FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
+          FILE_COUNT: ${{ steps.local.outputs.file_count }}
         run: |
-          Write-Host 'Scout direct copy completed successfully.'
+          Write-Host 'Scout JFrog repository transfer completed.'
 
           Write-Host 'Source URL:'
-          Write-Host '${{ inputs.source_url }}'
+          Write-Host $env:SOURCE_INPUT
 
           Write-Host 'Target URL:'
-          Write-Host '${{ inputs.target_url }}'
+          Write-Host $env:TARGET_INPUT
 
-          Write-Host 'Source root folder:'
-          Write-Host '${{ steps.paths.outputs.source_root }}'
+          Write-Host 'Copied root folder:'
+          Write-Host $env:SOURCE_ROOT
 
           Write-Host 'Final target:'
-          Write-Host '${{ steps.paths.outputs.final_target }}'
+          Write-Host $env:FINAL_TARGET
+
+          Write-Host 'Transferred files:'
+          Write-Host $env:FILE_COUNT
 
           Write-Host 'Transfer method:'
-          Write-Host 'JFrog artifact-level copy'
+          Write-Host 'Scout download to local staging, then Scout upload'
 
-          Write-Host 'Threads:'
-          Write-Host '4'
-
-          Write-Host 'Local staging:'
-          Write-Host 'Not used'
+          Write-Host 'Folder hierarchy:'
+          Write-Host 'Preserved'
 
       # ==========================================================
-      # 12. CLEANUP
+      # 16. CLEANUP
       # ==========================================================
 
-      - name: Cleanup Scout Configuration
+      - name: Cleanup
         if: always()
         shell: pwsh
         continue-on-error: true
         run: |
+          if (Test-Path -LiteralPath $env:TEMP_FOLDER) {
+              Remove-Item `
+                -LiteralPath $env:TEMP_FOLDER `
+                -Recurse `
+                -Force
+          }
+
           jf c rm "$env:SCOUT_SERVER_ID" --quiet
 
-          Write-Host 'Scout JFrog configuration removed.'
+          Write-Host 'Temporary files and Scout configuration removed.'
