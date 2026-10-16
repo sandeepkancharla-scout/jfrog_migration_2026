@@ -214,3 +214,484 @@ jobs:
 
           try {
               $sourceUri = [System.Uri]$sourceInput
+          }
+          catch {
+              throw 'Source URL is invalid.'
+          }
+
+          try {
+              $configuredSourceUri = [System.Uri]$env:CONFIGURED_SOURCE_URL
+          }
+          catch {
+              throw 'SOURCE_URL secret is invalid.'
+          }
+
+          if ($sourceUri.Scheme -ne 'https') {
+              throw 'Source URL must use HTTPS.'
+          }
+
+          if ($sourceUri.Host -ne $configuredSourceUri.Host) {
+              Write-Host 'Input source host:'
+              Write-Host $sourceUri.Host
+
+              Write-Host 'Configured source host:'
+              Write-Host $configuredSourceUri.Host
+
+              throw 'Source URL does not belong to configured VWG Artifactory.'
+          }
+
+          $marker = '/artifactory/'
+
+          $markerPosition = $sourceUri.AbsolutePath.IndexOf(
+              $marker,
+              [System.StringComparison]::OrdinalIgnoreCase
+          )
+
+          if ($markerPosition -lt 0) {
+              throw 'Source URL must contain /artifactory/.'
+          }
+
+          $sourceArtifactPath = $sourceUri.AbsolutePath.Substring(
+              $markerPosition + $marker.Length
+          )
+
+          $sourceArtifactPath = [System.Uri]::UnescapeDataString(
+              $sourceArtifactPath
+          )
+
+          $sourceArtifactPath = $sourceArtifactPath.Replace('\', '/')
+          $sourceArtifactPath = $sourceArtifactPath.Trim('/')
+
+          if (-not $sourceArtifactPath) {
+              throw 'Unable to determine VWG source path.'
+          }
+
+          if ($sourceArtifactPath.Contains('..')) {
+              throw 'Source path cannot contain ..'
+          }
+
+          $firstSlash = $sourceArtifactPath.IndexOf('/')
+
+          if ($firstSlash -lt 1) {
+              throw 'Source URL must include a repository and folder path.'
+          }
+
+          $sourceRepository = $sourceArtifactPath.Substring(
+              0,
+              $firstSlash
+          )
+
+          $sourceRelativePath = $sourceArtifactPath.Substring(
+              $firstSlash + 1
+          )
+
+          $sourceRelativePath = $sourceRelativePath.Trim('/')
+
+          if (-not $sourceRelativePath) {
+              throw 'Source URL must point to a folder inside the repository.'
+          }
+
+          if ($destinationFolder.Contains('..')) {
+              throw 'Scout destination folder cannot contain ..'
+          }
+
+          $destinationFolder = $destinationFolder.Replace('\', '/')
+          $destinationFolder = $destinationFolder.Trim('/')
+
+          if (-not $destinationFolder) {
+              throw 'Scout destination folder is invalid.'
+          }
+
+          $sourceSearchPattern = "$sourceArtifactPath/*"
+
+          $targetPath = (
+    *         "$env:TARGET_REPOSITORY/"*+
+              "$destinationFolde*"
+          )
+
+          Write-Hos* 'Migration paths'
+
+          Writ*-Host 'Source repository:'
+       *  Write-Host $sourceRepository
+
+  *       Write-Host 'Source relative*path:'
+          Write-Host $sourc*RelativePath
+
+          Write-Host*'Source search pattern:'
+         *Write-Host $sourceSearchPattern
+
+ *        Write-Host 'Scout target:'*          Write-Host $targetPath
+
+*         "source_repository=$sourc*Repository" |
+            Out-File*`
+              -FilePath $env:GIT*UB_OUTPUT `
+              -Encodin* utf8 `
+              -Append
+
+   *      "source_relative_path=$sourc*RelativePath" |
+            Out-Fi*e `
+              -FilePath $env:G*THUB_OUTPUT `
+              -Encod*ng utf8 `
+              -Append
+
+ *        "source_artifact_path=$sou*ceArtifactPath" |
+            Out-*ile `
+              -FilePath $env*GITHUB_OUTPUT `
+              -Enc*ding utf8 `
+              -Append
+*          "source_search_pattern=$*ourceSearchPattern" |
+            *ut-File `
+              -FilePath *env:GITHUB_OUTPUT `
+              *Encoding utf8 `
+              -App*nd
+
+          "target_path=$target*ath" |
+            Out-File `
+    *         -FilePath $env:GITHUB_OUT*UT `
+              -Encoding utf8 *
+              -Append
+
+      # ==*==================================*====================
+      # 8. VE*IFY VWG SOURCE
+      # ===========*==================================*===========
+
+      - name: Verify *WG Source Artifacts
+        shell:*pwsh
+        env:
+          SOURCE*SEARCH_PATTERN: ${{ steps.paths.ou*puts.source_search_pattern }}
+    *   run: |
+          $ErrorActionPr*ference = 'Stop'
+
+          Write-*ost 'Searching VWG source:'
+      *   Write-Host $env:SOURCE_SEARCH_P*TTERN
+
+          jf rt search `
+  *         "$env:SOURCE_SEARCH_PATTE*N" `
+            --server-id="$env*SOURCE_SERVER_ID" `
+            --*ecursive=true `
+            --incl*de-dirs=false `
+            --fail*no-op=true
+
+          if ($LASTEXI*CODE -ne 0) {
+              throw *No artifacts were found under the *WG source folder.'
+          }
+
+  *   # =============================*============================
+     *# 9. CLEAN TEMP FOLDER
+      # ===*==================================*===================
+
+      - name:*Clean Migration Temp Folder
+      * shell: pwsh
+        run: |
+      *   $ErrorActionPreference = 'Stop'*
+          if (Test-Path -LiteralP*th $env:TEMP_FOLDER) {
+           *  Remove-Item `
+                -L*teralPath $env:TEMP_FOLDER `
+     *          -Recurse `
+             *  -Force
+          }
+
+          Ne*-Item `
+            -ItemType Dire*tory `
+            -Path $env:TEMP*FOLDER `
+            -Force |
+    *       Out-Null
+
+          Write-H*st 'Migration temp folder:'
+      *   Write-Host $env:TEMP_FOLDER
+
+  *   # =============================*============================
+     *# 10. DOWNLOAD FROM VWG
+      #
+  *   # flat=false preserves the full*Artifactory hierarchy.
+      # The*correct selected subtree is locate* in the next step.
+      # =======*==================================*===============
+
+      - name: Dow*load VWG Artifacts
+        shell: *wsh
+        env:
+          SOURCE_*EARCH_PATTERN: ${{ steps.paths.out*uts.source_search_pattern }}
+     *  run: |
+          $ErrorActionPre*erence = 'Stop'
+
+          Write-H*st 'Downloading VWG artifacts'
+
+  *       Write-Host 'Source:'
+      *   Write-Host $env:SOURCE_SEARCH_P*TTERN
+
+          Write-Host 'Local*destination:'
+          Write-Host*$env:TEMP_FOLDER
+
+          jf rt *ownload `
+            "$env:SOURCE*SEARCH_PATTERN" `
+            "$en*:TEMP_FOLDER/" `
+            --ser*er-id="$env:SOURCE_SERVER_ID" `
+  *         --recursive=true `
+      *     --flat=false `
+            --*nclude-dirs=true `
+            --f*il-no-op=true `
+            --thre*ds=8
+
+          if ($LASTEXITCODE *ne 0) {
+              throw 'VWG a*tifact download failed.'
+         *}
+
+          Write-Host 'VWG downl*ad completed.'
+
+      # ==========*==================================*============
+      # 11. LOCATE DO*NLOADED SOURCE SUBTREE
+      # ===*==================================*===================
+
+      - name:*Locate Downloaded Source Folder
+  *     id: local
+        shell: pwsh*        env:
+          SOURCE_REPO*ITORY: ${{ steps.paths.outputs.sou*ce_repository }}
+          SOURCE_*ELATIVE_PATH: ${{ steps.paths.outp*ts.source_relative_path }}
+       *run: |
+          $ErrorActionPrefe*ence = 'Stop'
+
+          $windowsR*lativePath = $env:SOURCE_RELATIVE_*ATH.Replace(
+              '/',
+  *           '\'
+          )
+
+      *   $candidateWithRepository = Join*Path `
+            -Path $env:TEMP*FOLDER `
+            -ChildPath "$*nv:SOURCE_REPOSITORY\$windowsRelat*vePath"
+
+          $candidateWitho*tRepository = Join-Path `
+        *   -Path $env:TEMP_FOLDER `
+      *     -ChildPath $windowsRelativePa*h
+
+          $localSource = $null
+*          if (Test-Path -LiteralPa*h $candidateWithRepository) {
+    *         $localSource = $candidate*ithRepository
+          }
+        * elseif (Test-Path -LiteralPath $c*ndidateWithoutRepository) {
+      *       $localSource = $candidateWi*houtRepository
+          }
+       *  else {
+              Write-Host *Downloaded directory tree:'
+
+     *        Get-ChildItem `
+                -LiteralPath $env:TEMP_FOLDER `
+                -Recurse |
+                ForEach-Object {
+                    Write-Host $_.FullName
+                }
+
+              throw 'Unable to locate downloaded VWG source subtree.'
+          }
+
+          $downloadedFiles = @(
+              Get-ChildItem `
+                -LiteralPath $localSource `
+                -Recurse `
+                -File
+          )
+
+          if ($downloadedFiles.Count -eq 0) {
+              throw 'The downloaded VWG source subtree contains no files.'
+          }
+
+          Write-Host 'Local source directory:'
+          Write-Host $localSource
+
+          Write-Host 'Downloaded file count:'
+          Write-Host $downloadedFiles.Count
+
+          "local_source=$localSource" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+          "downloaded_count=$($downloadedFiles.Count)" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+      # ==========================================================
+      # 12. DISPLAY PRESERVED STRUCTURE
+      # ==========================================================
+
+      - name: Show Downloaded Structure
+        shell: pwsh
+        env:
+          LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host 'Downloaded VWG structure:'
+
+          Get-ChildItem `
+            -LiteralPath $env:LOCAL_SOURCE `
+            -Recurse `
+            -File |
+            ForEach-Object {
+                $relativePath = $_.FullName.Substring(
+                    $env:LOCAL_SOURCE.Length
+                )
+
+                $relativePath = $relativePath.TrimStart('\')
+
+                Write-Host $relativePath
+            }
+
+      # ==========================================================
+      # 13. PREVIEW SCOUT UPLOAD
+      # ==========================================================
+
+      - name: Preview Scout Upload
+        shell: pwsh
+        env:
+          LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
+          TARGET_PATH: ${{ steps.paths.outputs.target_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host 'Previewing Scout upload'
+
+          Write-Host 'Local source:'
+          Write-Host $env:LOCAL_SOURCE
+
+          Write-Host 'Scout target:'
+          Write-Host $env:TARGET_PATH
+
+          Push-Location $env:LOCAL_SOURCE
+
+          try {
+              jf rt upload `
+                './*' `
+                "$env:TARGET_PATH/" `
+                --server-id="$env:TARGET_SERVER_ID" `
+                --recursive=true `
+                --flat=false `
+                --dry-run
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw 'Scout upload preview failed.'
+              }
+          }
+          finally {
+              Pop-Location
+          }
+
+      # ==========================================================
+      # 14. UPLOAD TO SCOUT
+      # ==========================================================
+
+      - name: Upload Artifacts To Scout
+        shell: pwsh
+        env:
+          LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
+          TARGET_PATH: ${{ steps.paths.outputs.target_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host 'Uploading artifacts to Scout'
+
+          Write-Host 'Local source:'
+          Write-Host $env:LOCAL_SOURCE
+
+          Write-Host 'Scout target:'
+          Write-Host $env:TARGET_PATH
+
+          Push-Location $env:LOCAL_SOURCE
+
+          try {
+              jf rt upload `
+                './*' `
+                "$env:TARGET_PATH/" `
+                --server-id="$env:TARGET_SERVER_ID" `
+                --recursive=true `
+                --flat=false `
+                --fail-no-op=true `
+                --threads=8
+
+              if ($LASTEXITCODE -ne 0) {
+                  throw 'Scout artifact upload failed.'
+              }
+          }
+          finally {
+              Pop-Location
+          }
+
+          Write-Host 'Scout upload completed.'
+
+      # ==========================================================
+      # 15. VERIFY SCOUT TARGET
+      # ==========================================================
+
+      - name: Verify Scout Upload
+        shell: pwsh
+        env:
+          TARGET_PATH: ${{ steps.paths.outputs.target_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $targetSearchPattern = "$env:TARGET_PATH/*"
+
+          Write-Host 'Verifying Scout target:'
+          Write-Host $targetSearchPattern
+
+          jf rt search `
+            "$targetSearchPattern" `
+            --server-id="$env:TARGET_SERVER_ID" `
+            --recursive=true `
+            --include-dirs=false `
+            --fail-no-op=true
+
+          if ($LASTEXITCODE -ne 0) {
+              throw 'Scout target verification failed.'
+          }
+
+          Write-Host 'Scout target verified.'
+
+      # ==========================================================
+      # 16. SUMMARY
+      # ==========================================================
+
+      - name: Migration Summary
+        if: success()
+        shell: pwsh
+        env:
+          INPUT_SOURCE_URL: ${{ inputs.source_url }}
+          TARGET_PATH: ${{ steps.paths.outputs.target_path }}
+          DOWNLOADED_COUNT: ${{ steps.local.outputs.downloaded_count }}
+        run: |
+          Write-Host 'VWG to Scout migration completed successfully.'
+
+          Write-Host 'VWG source:'
+          Write-Host $env:INPUT_SOURCE_URL
+
+          Write-Host 'Scout target:'
+          Write-Host $env:TARGET_PATH
+
+          Write-Host 'Files transferred:'
+          Write-Host $env:DOWNLOADED_COUNT
+
+          Write-Host 'Folder hierarchy:'
+          Write-Host 'Preserved'
+
+      # ==========================================================
+      # 17. CLEANUP
+      # ==========================================================
+
+      - name: Cleanup Migration Files And Configurations
+        if: always()
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          if (Test-Path -LiteralPath $env:TEMP_FOLDER) {
+              Remove-Item `
+                -LiteralPath $env:TEMP_FOLDER `
+                -Recurse `
+                -Force
+          }
+
+          jf c rm "$env:SOURCE_SERVER_ID" --quiet
+          jf c rm "$env:TARGET_SERVER_ID" --quiet
+
+          Write-Host 'Temporary files and JFrog configurations removed.'
