@@ -5,14 +5,13 @@ run-name: Migrate VWG artifacts to ${{ inputs.build_number }}
 on:
   workflow_dispatch:
     inputs:
-
       source_url:
         description: "Source Build VWG (Folder URL from JFrog)"
         required: true
         type: string
 
       build_number:
-        description: "OTA Release Build (Ex: 39.100 or CW29-39.100)"
+        description: "OTA Release Build (Ex: demo, 39.100 or CW29-39.100)"
         required: true
         type: string
 
@@ -22,13 +21,10 @@ on:
         default: false
         type: boolean
 
-
 permissions:
   contents: read
 
-
 jobs:
-
   migrate:
 
     runs-on:
@@ -38,9 +34,7 @@ jobs:
     timeout-minutes: 180
 
     env:
-
       SOURCE_SERVER_ID: source
-
       TARGET_SERVER_ID: scout-artifactory
 
       TARGET_REPOSITORY: rvtm-vw-rvt-scout-build-binaries-clone
@@ -48,130 +42,87 @@ jobs:
       WORKING_FOLDER: C:\Temp\Artifacts
 
       JFROG_CLI_OFFER_CONFIG: "false"
-
       JFROG_CLI_LOG_LEVEL: INFO
-
 
     steps:
 
       # ==========================================================
-      # 1
       # SETUP JFROG CLI
       # ==========================================================
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v4
         env:
-
           JF_URL: ${{ secrets.TARGET_URL }}
-
           JF_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
-
-
-      # ==========================================================
-      # 2
-      # SHOW VERSION
-      # ==========================================================
 
       - name: Show JFrog CLI Version
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
           jf --version
 
           if ($LASTEXITCODE -ne 0) {
-
               throw "JFrog CLI is not available."
-
           }
 
 
       # ==========================================================
-      # 3
       # VALIDATE SECRETS
       # ==========================================================
 
       - name: Validate Required Secrets
         shell: pwsh
-
         env:
-
           SOURCE_URL: ${{ secrets.SOURCE_URL }}
-
           SOURCE_ACCESS_TOKEN: ${{ secrets.SOURCE_ACCESS_TOKEN }}
-
           TARGET_URL: ${{ secrets.TARGET_URL }}
-
           TARGET_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
-
         run: |
-
           $ErrorActionPreference = "Stop"
 
           if (-not $env:SOURCE_URL) {
-
               throw "SOURCE_URL secret is missing."
-
           }
-
 
           if (-not $env:SOURCE_ACCESS_TOKEN) {
-
               throw "SOURCE_ACCESS_TOKEN secret is missing."
-
           }
-
 
           if (-not $env:TARGET_URL) {
-
               throw "TARGET_URL secret is missing."
-
           }
-
 
           if (-not $env:TARGET_ACCESS_TOKEN) {
-
               throw "TARGET_ACCESS_TOKEN secret is missing."
-
           }
 
-
-          Write-Host "Required secrets are configured."
+          Write-Host "All required secrets are configured."
 
 
       # ==========================================================
-      # 4
-      # CLEAN OLD CONFIG
+      # CLEAN OLD CONFIGS
       # ==========================================================
 
       - name: Cleanup Existing Configs
         shell: pwsh
         continue-on-error: true
         run: |
-
           jf c rm "$env:SOURCE_SERVER_ID" --quiet
-
           jf c rm "$env:TARGET_SERVER_ID" --quiet
 
 
       # ==========================================================
-      # 5
-      # CONFIGURE VWG SOURCE
+      # CONFIGURE SOURCE
       # ==========================================================
 
       - name: Configure Source
         shell: pwsh
-
         env:
-
           SOURCE_URL: ${{ secrets.SOURCE_URL }}
-
           SOURCE_ACCESS_TOKEN: ${{ secrets.SOURCE_ACCESS_TOKEN }}
-
         run: |
-
           $ErrorActionPreference = "Stop"
 
           jf c add "$env:SOURCE_SERVER_ID" `
@@ -180,33 +131,23 @@ jobs:
             --interactive=false `
             --overwrite=true
 
-
           if ($LASTEXITCODE -ne 0) {
-
               throw "Failed to configure VWG source Artifactory."
-
           }
-
 
           Write-Host "VWG source configured."
 
 
       # ==========================================================
-      # 6
-      # CONFIGURE SCOUT TARGET
+      # CONFIGURE TARGET
       # ==========================================================
 
       - name: Configure Target
         shell: pwsh
-
         env:
-
           TARGET_URL: ${{ secrets.TARGET_URL }}
-
           TARGET_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
-
         run: |
-
           $ErrorActionPreference = "Stop"
 
           jf c add "$env:TARGET_SERVER_ID" `
@@ -215,114 +156,76 @@ jobs:
             --interactive=false `
             --overwrite=true
 
-
           if ($LASTEXITCODE -ne 0) {
-
               throw "Failed to configure Scout Artifactory."
-
           }
-
 
           Write-Host "Scout target configured."
 
 
       # ==========================================================
-      # 7
-      # VERIFY VWG SOURCE
+      # VERIFY CONNECTIONS
       # ==========================================================
 
       - name: Verify Source Connection
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
-
-          Write-Host ""
 
           Write-Host "Checking VWG source connection..."
 
           jf rt ping `
             --server-id="$env:SOURCE_SERVER_ID"
 
-
           if ($LASTEXITCODE -ne 0) {
-
               throw "Cannot connect to VWG Artifactory."
-
           }
 
-
-      # ==========================================================
-      # 8
-      # VERIFY SCOUT DNS
-      # ==========================================================
 
       - name: Verify Target DNS
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
-
-          Write-Host ""
 
           Write-Host "Checking Scout DNS..."
 
           nslookup artifactory.sctmtrs.xyz
 
-
           if ($LASTEXITCODE -ne 0) {
-
-              throw "Scout Artifactory DNS lookup failed."
-
+              throw "Scout DNS lookup failed."
           }
 
-
-      # ==========================================================
-      # 9
-      # VERIFY SCOUT TARGET
-      # ==========================================================
 
       - name: Verify Target Connection
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
-
-          Write-Host ""
 
           Write-Host "Checking Scout target connection..."
 
           jf rt ping `
             --server-id="$env:TARGET_SERVER_ID"
 
-
           if ($LASTEXITCODE -ne 0) {
-
               throw "Cannot connect to Scout Artifactory."
-
           }
 
 
       # ==========================================================
-      # 10
-      # CLEAN WORKING DIRECTORY
+      # CLEAN LOCAL WORKSPACE
       # ==========================================================
 
       - name: Clean Working Folder
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
           if (Test-Path -LiteralPath "$env:WORKING_FOLDER") {
-
               Remove-Item `
                 -LiteralPath "$env:WORKING_FOLDER" `
                 -Recurse `
                 -Force
-
           }
-
 
           New-Item `
             -ItemType Directory `
@@ -330,264 +233,127 @@ jobs:
             -Force |
             Out-Null
 
-
-          Write-Host ""
-
-          Write-Host "Working directory:"
-
+          Write-Host "Working folder:"
           Write-Host "$env:WORKING_FOLDER"
 
 
       # ==========================================================
-      # 11
       # PARSE SOURCE URL
       # ==========================================================
 
       - name: Parse Source URL
         id: parse
         shell: pwsh
-
         env:
-
           CONFIGURED_SOURCE_URL: ${{ secrets.SOURCE_URL }}
-
         run: |
-
           $ErrorActionPreference = "Stop"
 
-
           $sourceUrl = "${{ inputs.source_url }}".Trim()
-
           $releaseFolder = "${{ inputs.build_number }}".Trim()
 
-
           if (-not $sourceUrl) {
-
               throw "source_url is empty."
-
           }
-
 
           if (-not $releaseFolder) {
-
               throw "build_number is empty."
-
           }
 
-
           try {
-
               $sourceUri = [System.Uri]$sourceUrl
-
           }
           catch {
-
               throw "Source URL is invalid."
-
           }
-
 
           try {
-
-              $configuredSourceUri =
-                  [System.Uri]$env:CONFIGURED_SOURCE_URL
-
+              $configuredSourceUri = [System.Uri]$env:CONFIGURED_SOURCE_URL
           }
           catch {
-
               throw "SOURCE_URL secret is invalid."
-
           }
-
 
           if ($sourceUri.Host -ne $configuredSourceUri.Host) {
+              Write-Host "Input host     : $($sourceUri.Host)"
+              Write-Host "Configured host: $($configuredSourceUri.Host)"
 
-              Write-Host ""
-
-              Write-Host "Input host:"
-
-              Write-Host "$($sourceUri.Host)"
-
-              Write-Host ""
-
-              Write-Host "Configured host:"
-
-              Write-Host "$($configuredSourceUri.Host)"
-
-              throw "Source URL does not belong to SOURCE_URL."
-
+              throw "Source URL does not match SOURCE_URL."
           }
-
 
           $marker = "/artifactory/"
 
-
-          $position =
-              $sourceUri.AbsolutePath.IndexOf(
-                  $marker,
-                  [System.StringComparison]::OrdinalIgnoreCase
-              )
-
+          $position = $sourceUri.AbsolutePath.IndexOf(
+              $marker,
+              [System.StringComparison]::OrdinalIgnoreCase
+          )
 
           if ($position -lt 0) {
-
               throw "Source URL must contain /artifactory/."
-
           }
 
+          $artifactPath = $sourceUri.AbsolutePath.Substring(
+              $position + $marker.Length
+          )
 
-          $artifactPath =
-              $sourceUri.AbsolutePath.Substring(
-                  $position + $marker.Length
-              )
+          $artifactPath = [System.Uri]::UnescapeDataString(
+              $artifactPath
+          )
 
-
-          $artifactPath =
-              [System.Uri]::UnescapeDataString(
-                  $artifactPath
-              )
-
-
-          $artifactPath =
-              $artifactPath.Replace("\", "/")
-
-
-          $artifactPath =
-              $artifactPath.Trim("/")
-
+          $artifactPath = $artifactPath.Replace("\", "/")
+          $artifactPath = $artifactPath.Trim("/")
 
           if (-not $artifactPath) {
-
               throw "Could not determine Artifactory path."
-
           }
 
-
-          $firstSlash =
-              $artifactPath.IndexOf("/")
-
+          $firstSlash = $artifactPath.IndexOf("/")
 
           if ($firstSlash -lt 1) {
-
               throw "Could not determine source repository."
-
           }
 
+          $sourceRepository = $artifactPath.Substring(
+              0,
+              $firstSlash
+          )
 
-          $sourceRepository =
-              $artifactPath.Substring(
-                  0,
-                  $firstSlash
-              )
+          $sourceRelativePath = $artifactPath.Substring(
+              $firstSlash + 1
+          )
 
-
-          $sourceRelativePath =
-              $artifactPath.Substring(
-                  $firstSlash + 1
-              )
-
-
-          $sourceRelativePath =
-              $sourceRelativePath.Trim("/")
-
+          $sourceRelativePath = $sourceRelativePath.Trim("/")
 
           if (-not $sourceRelativePath) {
-
-              throw "Source folder could not be determined."
-
+              throw "Could not determine source folder."
           }
 
+          $sourceSearchPattern = (
+              "$sourceRepository/" +
+              "$sourceRelativePath/*"
+          )
 
-          # ======================================================
-          # SEARCH PATTERN
-          #
-          # Normal wildcard.
-          #
-          # Example:
-          #
-          # AUTO_V1_0/pvm/*
-          # ======================================================
+          $targetBasePath = (
+              "$env:TARGET_REPOSITORY/" +
+              "$releaseFolder/" +
+              "$sourceRelativePath"
+          )
 
-          $sourceSearchPattern =
-              "$sourceRepository/$sourceRelativePath/*"
-
-
-          # ======================================================
-          # DOWNLOAD PATTERN
-          #
-          # Capture relative path beneath selected folder.
-          #
-          # Example:
-          #
-          # AUTO_V1_0/pvm/(.*)
-          #
-          # RegExp mode is enabled during the actual download.
-          # ======================================================
-
-          $sourceDownloadPattern =
-              "$sourceRepository/$sourceRelativePath/(.*)"
-
-
-          # ======================================================
-          # TARGET
-          # ======================================================
-
-          $targetBasePath =
-              "$env:TARGET_REPOSITORY/$releaseFolder/$sourceRelativePath"
-
-
-          $targetSearchPattern =
+          $targetSearchPattern = (
               "$targetBasePath/*"
-
+          )
 
           Write-Host ""
-
-          Write-Host "================================================"
-
+          Write-Host "==========================================="
           Write-Host "MIGRATION DETAILS"
-
-          Write-Host "================================================"
-
+          Write-Host "==========================================="
+          Write-Host "Source repository : $sourceRepository"
+          Write-Host "Source path       : $sourceRelativePath"
+          Write-Host "Source search     : $sourceSearchPattern"
+          Write-Host "Release           : $releaseFolder"
+          Write-Host "Scout target      : $targetBasePath"
+          Write-Host "==========================================="
           Write-Host ""
-
-          Write-Host "Source repository:"
-
-          Write-Host "$sourceRepository"
-
-          Write-Host ""
-
-          Write-Host "Source path:"
-
-          Write-Host "$sourceRelativePath"
-
-          Write-Host ""
-
-          Write-Host "Search pattern:"
-
-          Write-Host "$sourceSearchPattern"
-
-          Write-Host ""
-
-          Write-Host "Download pattern:"
-
-          Write-Host "$sourceDownloadPattern"
-
-          Write-Host ""
-
-          Write-Host "OTA release:"
-
-          Write-Host "$releaseFolder"
-
-          Write-Host ""
-
-          Write-Host "Scout target:"
-
-          Write-Host "$targetBasePath"
-
-          Write-Host ""
-
-          Write-Host "================================================"
-
 
           "source_repository=$sourceRepository" |
             Out-File `
@@ -595,13 +361,11 @@ jobs:
               -Encoding utf8 `
               -Append
 
-
           "source_relative_path=$sourceRelativePath" |
             Out-File `
               "$env:GITHUB_OUTPUT" `
               -Encoding utf8 `
               -Append
-
 
           "source_search_pattern=$sourceSearchPattern" |
             Out-File `
@@ -609,20 +373,11 @@ jobs:
               -Encoding utf8 `
               -Append
 
-
-          "source_download_pattern=$sourceDownloadPattern" |
-            Out-File `
-              "$env:GITHUB_OUTPUT" `
-              -Encoding utf8 `
-              -Append
-
-
           "target_base_path=$targetBasePath" |
             Out-File `
               "$env:GITHUB_OUTPUT" `
               -Encoding utf8 `
               -Append
-
 
           "target_search_pattern=$targetSearchPattern" |
             Out-File `
@@ -632,28 +387,18 @@ jobs:
 
 
       # ==========================================================
-      # 12
-      # SEARCH VWG SOURCE
+      # CONFIRM SOURCE EXISTS
       # ==========================================================
 
       - name: Search Source Files
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
-          $pattern =
-              "${{ steps.parse.outputs.source_search_pattern }}"
+          $pattern = "${{ steps.parse.outputs.source_search_pattern }}"
 
-
-          Write-Host ""
-
-          Write-Host "Searching VWG source:"
-
+          Write-Host "Searching source:"
           Write-Host "$pattern"
-
-          Write-Host ""
-
 
           jf rt search `
             "$pattern" `
@@ -662,100 +407,60 @@ jobs:
             --include-dirs=false `
             --fail-no-op=true
 
-
           if ($LASTEXITCODE -ne 0) {
-
               throw "Source files were not found."
-
           }
 
 
       # ==========================================================
-      # 13
-      # CHECK SCOUT TARGET
+      # CHECK TARGET
       #
-      # FIX:
+      # IMPORTANT:
+      # No JSON parsing.
       #
-      # NO JSON parsing.
+      # We use --fail-no-op=true.
       #
-      # JFROG_CLI_LOG_LEVEL is temporarily ERROR so that only the
-      # command result is captured.
+      # Exit 0 = artifact exists
+      # Non-zero = no artifact
       # ==========================================================
 
       - name: Check Existing Target
         id: target_check
         shell: pwsh
-        env:
-
-          JFROG_CLI_LOG_LEVEL: ERROR
-
+        continue-on-error: true
         run: |
+          $ErrorActionPreference = "Continue"
 
-          $ErrorActionPreference = "Stop"
-
-
-          $targetPattern =
-              "${{ steps.parse.outputs.target_search_pattern }}"
-
-
-          Write-Host ""
+          $targetPattern = "${{ steps.parse.outputs.target_search_pattern }}"
 
           Write-Host "Checking Scout target:"
-
           Write-Host "$targetPattern"
-
           Write-Host ""
 
+          jf rt search `
+            "$targetPattern" `
+            --server-id="$env:TARGET_SERVER_ID" `
+            --recursive=true `
+            --include-dirs=false `
+            --limit=1 `
+            --fail-no-op=true
 
-          $targetResult =
-              jf rt search `
-                "$targetPattern" `
-                --server-id="$env:TARGET_SERVER_ID" `
-                --recursive=true `
-                --include-dirs=false `
-                --limit=1
+          $result = $LASTEXITCODE
 
-
-          $searchExitCode =
-              $LASTEXITCODE
-
-
-          if ($searchExitCode -ne 0) {
-
-              throw "Unable to search Scout target."
-
-          }
-
-
-          $targetText =
-              ($targetResult | Out-String).Trim()
-
-
-          $targetExists =
-              $false
-
-
-          if ($targetText.Length -gt 2) {
-
-              $targetExists =
-                  $true
-
-          }
-
-
-          Write-Host "Target exists: $targetExists"
-
-
-          if ($targetExists) {
+          if ($result -eq 0) {
+              Write-Host ""
+              Write-Host "Existing artifacts were found."
 
               "target_exists=true" |
                 Out-File `
                   "$env:GITHUB_OUTPUT" `
                   -Encoding utf8 `
                   -Append
-
           }
           else {
+              Write-Host ""
+              Write-Host "No existing artifacts found."
+              Write-Host "Target is available for migration."
 
               "target_exists=false" |
                 Out-File `
@@ -763,67 +468,44 @@ jobs:
                   -Encoding utf8 `
                   -Append
 
+              exit 0
           }
 
 
       # ==========================================================
-      # 14
-      # VALIDATE OVERWRITE
+      # STOP IF TARGET EXISTS AND OVERWRITE IS FALSE
       # ==========================================================
 
       - name: Validate Overwrite
-        if: steps.target_check.outputs.target_exists == 'true'
+        if: >-
+          steps.target_check.outputs.target_exists == 'true' &&
+          inputs.overwrite_existing == false
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
+          Write-Host "Target already contains artifacts:"
+          Write-Host "${{ steps.parse.outputs.target_base_path }}"
 
-          $overwrite =
-              "${{ inputs.overwrite_existing }}" -eq "true"
-
-
-          if (-not $overwrite) {
-
-              Write-Host ""
-
-              Write-Host "Scout target already exists:"
-
-              Write-Host "${{ steps.parse.outputs.target_base_path }}"
-
-              Write-Host ""
-
-              throw "Enable overwrite_existing to replace this target."
-
-          }
+          throw "Target already exists. Enable overwrite_existing to replace it."
 
 
       # ==========================================================
-      # 15
-      # DELETE TARGET IF OVERWRITE ENABLED
+      # DELETE IF OVERWRITE ENABLED
       # ==========================================================
 
       - name: Delete Existing Target
         if: >-
           steps.target_check.outputs.target_exists == 'true' &&
           inputs.overwrite_existing == true
-
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
-
-          $target =
-              "${{ steps.parse.outputs.target_base_path }}"
-
-
-          Write-Host ""
+          $target = "${{ steps.parse.outputs.target_base_path }}"
 
           Write-Host "Deleting existing Scout target:"
-
           Write-Host "$target/"
-
 
           jf rt delete `
             "$target/" `
@@ -831,123 +513,123 @@ jobs:
             --recursive=true `
             --quiet
 
-
           if ($LASTEXITCODE -ne 0) {
-
-              throw "Could not delete existing Scout target."
-
+              throw "Failed to delete existing Scout target."
           }
 
 
       # ==========================================================
-      # 16
-      # DOWNLOAD VWG FILES
+      # DOWNLOAD
+      #
+      # Download the supplied folder preserving relative hierarchy.
       # ==========================================================
 
       - name: Download Files
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
+          $sourceRepository = "${{ steps.parse.outputs.source_repository }}"
+          $sourceRelativePath = "${{ steps.parse.outputs.source_relative_path }}"
 
-          $pattern =
-              "${{ steps.parse.outputs.source_download_pattern }}"
-
-
-          Write-Host ""
-
-          Write-Host "Downloading VWG files:"
-
-          Write-Host "$pattern"
+          $sourcePattern = (
+              "$sourceRepository/" +
+              "$sourceRelativePath/*"
+          )
 
           Write-Host ""
-
+          Write-Host "Downloading:"
+          Write-Host "$sourcePattern"
+          Write-Host ""
           Write-Host "Local destination:"
-
           Write-Host "$env:WORKING_FOLDER"
-
           Write-Host ""
-
 
           jf rt download `
-            "$pattern" `
-            "$env:WORKING_FOLDER/{1}" `
+            "$sourcePattern" `
+            "$env:WORKING_FOLDER/" `
             --server-id="$env:SOURCE_SERVER_ID" `
             --recursive=true `
             --flat=false `
             --include-dirs=true `
-            --regexp=true `
             --fail-no-op=true `
             --threads=8
 
-
           if ($LASTEXITCODE -ne 0) {
-
               throw "Download from VWG Artifactory failed."
-
           }
 
 
       # ==========================================================
-      # 17
-      # SHOW DOWNLOADED FILES
+      # LOCATE DOWNLOADED SOURCE ROOT
       # ==========================================================
 
-      - name: Show Downloaded Files
+      - name: Prepare Downloaded Files
         id: downloaded
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
+          $sourceRepository = "${{ steps.parse.outputs.source_repository }}"
+          $sourceRelativePath = "${{ steps.parse.outputs.source_relative_path }}"
 
-          $files =
-              @(
-                  Get-ChildItem `
-                    -LiteralPath "$env:WORKING_FOLDER" `
-                    -Recurse `
-                    -File
-              )
+          $sourceWindowsPath = $sourceRelativePath.Replace(
+              "/",
+              "\"
+          )
 
+          $candidate1 = Join-Path `
+              "$env:WORKING_FOLDER" `
+              "$sourceRepository\$sourceWindowsPath"
+
+          $candidate2 = Join-Path `
+              "$env:WORKING_FOLDER" `
+              "$sourceWindowsPath"
+
+          $localSource = $null
+
+          if (Test-Path -LiteralPath "$candidate1") {
+              $localSource = $candidate1
+          }
+          elseif (Test-Path -LiteralPath "$candidate2") {
+              $localSource = $candidate2
+          }
+          else {
+              $localSource = "$env:WORKING_FOLDER"
+          }
+
+          Write-Host ""
+          Write-Host "Local source selected:"
+          Write-Host "$localSource"
+          Write-Host ""
+
+          $files = @(
+              Get-ChildItem `
+                -LiteralPath "$localSource" `
+                -Recurse `
+                -File
+          )
 
           if ($files.Count -eq 0) {
-
-              throw "No files were downloaded."
-
+              throw "No downloaded files were found."
           }
-
-
-          Write-Host ""
 
           Write-Host "Downloaded Files"
-
-          Write-Host "================================================"
-
+          Write-Host "==================================="
 
           foreach ($file in $files) {
-
-              $relative =
-                  $file.FullName.Substring(
-                      $env:WORKING_FOLDER.Length
-                  )
-
-
-              $relative =
-                  $relative.TrimStart("\")
-
-
-              Write-Host "$relative"
-
+              Write-Host "$($file.FullName)"
           }
 
-
           Write-Host ""
-
           Write-Host "Downloaded count: $($files.Count)"
-
           Write-Host ""
 
+          "local_source=$localSource" |
+            Out-File `
+              "$env:GITHUB_OUTPUT" `
+              -Encoding utf8 `
+              -Append
 
           "downloaded_count=$($files.Count)" |
             Out-File `
@@ -957,136 +639,94 @@ jobs:
 
 
       # ==========================================================
-      # 18
       # PREVIEW UPLOAD
       # ==========================================================
 
       - name: Preview Scout Upload
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
+          $localSource = "${{ steps.downloaded.outputs.local_source }}"
+          $target = "${{ steps.parse.outputs.target_base_path }}"
 
-          $target =
-              "${{ steps.parse.outputs.target_base_path }}"
+          Write-Host ""
+          Write-Host "LOCAL SOURCE:"
+          Write-Host "$localSource"
+          Write-Host ""
+          Write-Host "TARGET:"
+          Write-Host "$target/"
+          Write-Host ""
 
-
-          Push-Location "$env:WORKING_FOLDER"
-
+          Push-Location "$localSource"
 
           try {
-
-              Write-Host ""
-
-              Write-Host "Previewing Scout upload..."
-
-              Write-Host ""
-
-
               jf rt upload `
-                "(.*)" `
-                "$target/{1}" `
+                "./*" `
+                "$target/" `
                 --server-id="$env:TARGET_SERVER_ID" `
                 --recursive=true `
                 --flat=false `
-                --regexp=true `
                 --dry-run
-
-
-              if ($LASTEXITCODE -ne 0) {
-
-                  throw "Upload preview failed."
-
-              }
-
           }
           finally {
-
               Pop-Location
-
           }
 
 
       # ==========================================================
-      # 19
-      # REAL UPLOAD
+      # UPLOAD
       # ==========================================================
 
       - name: Upload Files
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
-
-          $target =
-              "${{ steps.parse.outputs.target_base_path }}"
-
+          $localSource = "${{ steps.downloaded.outputs.local_source }}"
+          $target = "${{ steps.parse.outputs.target_base_path }}"
 
           Write-Host ""
-
-          Write-Host "Uploading to Scout:"
-
+          Write-Host "Uploading to:"
           Write-Host "$target/"
-
           Write-Host ""
 
-
-          Push-Location "$env:WORKING_FOLDER"
-
+          Push-Location "$localSource"
 
           try {
-
               jf rt upload `
-                "(.*)" `
-                "$target/{1}" `
+                "./*" `
+                "$target/" `
                 --server-id="$env:TARGET_SERVER_ID" `
                 --recursive=true `
                 --flat=false `
-                --regexp=true `
                 --fail-no-op=true `
                 --threads=8
 
-
               if ($LASTEXITCODE -ne 0) {
-
                   throw "Upload to Scout Artifactory failed."
-
               }
-
           }
           finally {
-
               Pop-Location
-
           }
 
 
       # ==========================================================
-      # 20
-      # VERIFY SCOUT UPLOAD
+      # VERIFY
       # ==========================================================
 
       - name: Verify Upload
         shell: pwsh
         run: |
-
           $ErrorActionPreference = "Stop"
 
-
-          $target =
-              "${{ steps.parse.outputs.target_search_pattern }}"
-
+          $target = "${{ steps.parse.outputs.target_search_pattern }}"
 
           Write-Host ""
-
-          Write-Host "Verifying Scout upload:"
-
+          Write-Host "Verifying Scout target:"
           Write-Host "$target"
-
           Write-Host ""
-
 
           jf rt search `
             "$target" `
@@ -1095,68 +735,43 @@ jobs:
             --include-dirs=false `
             --fail-no-op=true
 
-
           if ($LASTEXITCODE -ne 0) {
-
               throw "Scout upload verification failed."
-
           }
 
-
           Write-Host ""
-
-          Write-Host "Scout upload verified."
+          Write-Host "Scout upload verified successfully."
 
 
       # ==========================================================
-      # 21
-      # MIGRATION SUMMARY
+      # SUMMARY
       # ==========================================================
 
       - name: Migration Summary
         if: success()
         shell: pwsh
         run: |
-
           Write-Host ""
-
-          Write-Host "================================================"
-
+          Write-Host "============================================"
           Write-Host "JFROG MIGRATION COMPLETED"
-
-          Write-Host "================================================"
-
+          Write-Host "============================================"
           Write-Host ""
-
-          Write-Host "SOURCE"
-
+          Write-Host "SOURCE:"
           Write-Host "${{ inputs.source_url }}"
-
           Write-Host ""
-
-          Write-Host "OTA RELEASE"
-
+          Write-Host "RELEASE:"
           Write-Host "${{ inputs.build_number }}"
-
           Write-Host ""
-
-          Write-Host "SCOUT TARGET"
-
+          Write-Host "SCOUT TARGET:"
           Write-Host "${{ steps.parse.outputs.target_base_path }}"
-
           Write-Host ""
-
-          Write-Host "DOWNLOADED FILES"
-
+          Write-Host "FILES:"
           Write-Host "${{ steps.downloaded.outputs.downloaded_count }}"
-
           Write-Host ""
-
-          Write-Host "================================================"
+          Write-Host "============================================"
 
 
       # ==========================================================
-      # 22
       # CLEANUP
       # ==========================================================
 
@@ -1165,20 +780,14 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
-
           if (Test-Path -LiteralPath "$env:WORKING_FOLDER") {
-
               Remove-Item `
                 -LiteralPath "$env:WORKING_FOLDER" `
                 -Recurse `
                 -Force
-
           }
 
-
           jf c rm "$env:SOURCE_SERVER_ID" --quiet
-
           jf c rm "$env:TARGET_SERVER_ID" --quiet
-
 
           Write-Host "Cleanup completed."
