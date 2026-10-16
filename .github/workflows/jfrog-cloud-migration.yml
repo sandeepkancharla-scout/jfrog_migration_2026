@@ -1,31 +1,31 @@
 name: JFrog Migration
 
-run-name: Migrate VWG artifacts to ${{ inputs.build_number }}
+run-name: VWG to Scout - ${{ inputs.build_number }}
 
 on:
   workflow_dispatch:
     inputs:
+
       source_url:
-        description: "Source Build VWG (Folder URL from JFrog)"
+        description: "VWG JFrog source folder URL"
         required: true
         type: string
 
       build_number:
-        description: "OTA Release Build (Ex: demo, 39.100 or CW29-39.100)"
+        description: "Scout destination folder (Ex: demo, 39.100, CW29-39.100)"
         required: true
         type: string
 
-      overwrite_existing:
-        description: "Overwrite target if it already exists"
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
+
 jobs:
+
   migrate:
+
+    name: VWG to Scout Artifact Transfer
 
     runs-on:
       - self-hosted
@@ -33,16 +33,25 @@ jobs:
 
     timeout-minutes: 180
 
+
     env:
+
       SOURCE_SERVER_ID: source
+
       TARGET_SERVER_ID: scout-artifactory
 
       TARGET_REPOSITORY: rvtm-vw-rvt-scout-build-binaries-clone
 
-      WORKING_FOLDER: C:\Temp\Artifacts
+      TEMP_FOLDER: C:\Temp\Artifacts
 
       JFROG_CLI_OFFER_CONFIG: "false"
-      JFROG_CLI_LOG_LEVEL: INFO
+
+      # Prevent setup-jfrog-cli from automatically publishing
+      # GitHub build information to JFrog.
+      JFROG_CLI_BUILD_NAME: ""
+
+      JFROG_CLI_BUILD_NUMBER: ""
+
 
     steps:
 
@@ -52,315 +61,391 @@ jobs:
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+
         env:
           JF_URL: ${{ secrets.TARGET_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
 
+
+      # ==========================================================
+      # 2. SHOW JFROG VERSION
+      # ==========================================================
+
       - name: Show JFrog CLI Version
         shell: pwsh
         run: |
+
           $ErrorActionPreference = "Stop"
 
           jf --version
 
           if ($LASTEXITCODE -ne 0) {
+
               throw "JFrog CLI is not available."
+
           }
 
 
       # ==========================================================
-      # 2. VALIDATE SECRETS
+      # 3. VALIDATE SECRETS
       # ==========================================================
 
-      - name: Validate Required Secrets
+      - name: Validate Secrets
         shell: pwsh
+
         env:
+
           SOURCE_URL: ${{ secrets.SOURCE_URL }}
+
           SOURCE_ACCESS_TOKEN: ${{ secrets.SOURCE_ACCESS_TOKEN }}
+
           TARGET_URL: ${{ secrets.TARGET_URL }}
+
           TARGET_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
+
         run: |
+
           $ErrorActionPreference = "Stop"
+
 
           if (-not $env:SOURCE_URL) {
+
               throw "SOURCE_URL secret is missing."
+
           }
+
 
           if (-not $env:SOURCE_ACCESS_TOKEN) {
+
               throw "SOURCE_ACCESS_TOKEN secret is missing."
+
           }
+
 
           if (-not $env:TARGET_URL) {
+
               throw "TARGET_URL secret is missing."
+
           }
+
 
           if (-not $env:TARGET_ACCESS_TOKEN) {
+
               throw "TARGET_ACCESS_TOKEN secret is missing."
+
           }
 
-          Write-Host "Secrets OK."
+
+          Write-Host "Required secrets are available."
 
 
       # ==========================================================
-      # 3. CLEAN EXISTING JFROG CONFIG
+      # 4. REMOVE PREVIOUS SERVER CONFIGURATIONS
       # ==========================================================
 
-      - name: Cleanup Existing Configs
+      - name: Cleanup Existing JFrog Configs
         shell: pwsh
         continue-on-error: true
+
         run: |
-          jf c rm "$env:SOURCE_SERVER_ID" --quiet
-          jf c rm "$env:TARGET_SERVER_ID" --quiet
+
+          jf c rm source --quiet
+
+          jf c rm scout-artifactory --quiet
 
 
       # ==========================================================
-      # 4. CONFIGURE SOURCE
+      # 5. CONFIGURE VWG SOURCE
       # ==========================================================
 
-      - name: Configure Source
+      - name: Configure VWG Source
         shell: pwsh
+
         env:
+
           SOURCE_URL: ${{ secrets.SOURCE_URL }}
+
           SOURCE_ACCESS_TOKEN: ${{ secrets.SOURCE_ACCESS_TOKEN }}
+
         run: |
+
           $ErrorActionPreference = "Stop"
 
-          jf c add "$env:SOURCE_SERVER_ID" `
+
+          Write-Host "Configuring VWG Artifactory..."
+
+
+          jf c add source `
             --url="$env:SOURCE_URL" `
             --access-token="$env:SOURCE_ACCESS_TOKEN" `
             --interactive=false `
             --overwrite=true
 
+
           if ($LASTEXITCODE -ne 0) {
-              throw "Failed to configure VWG source."
+
+              throw "Failed to configure VWG Artifactory."
+
           }
 
-          Write-Host "VWG source configured."
-
 
       # ==========================================================
-      # 5. CONFIGURE TARGET
+      # 6. CONFIGURE SCOUT TARGET
       # ==========================================================
 
-      - name: Configure Target
+      - name: Configure Scout Target
         shell: pwsh
+
         env:
+
           TARGET_URL: ${{ secrets.TARGET_URL }}
+
           TARGET_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
+
         run: |
+
           $ErrorActionPreference = "Stop"
 
-          jf c add "$env:TARGET_SERVER_ID" `
+
+          Write-Host "Configuring Scout Artifactory..."
+
+
+          jf c add scout-artifactory `
             --url="$env:TARGET_URL" `
             --access-token="$env:TARGET_ACCESS_TOKEN" `
             --interactive=false `
             --overwrite=true
 
+
           if ($LASTEXITCODE -ne 0) {
-              throw "Failed to configure Scout target."
+
+              throw "Failed to configure Scout Artifactory."
+
           }
 
-          Write-Host "Scout target configured."
-
 
       # ==========================================================
-      # 6. VERIFY SOURCE
+      # 7. VERIFY VWG CONNECTION
       # ==========================================================
 
-      - name: Verify Source Connection
+      - name: Verify VWG Connection
         shell: pwsh
+
         run: |
+
           $ErrorActionPreference = "Stop"
+
+
+          Write-Host "Testing VWG Artifactory..."
+
 
           jf rt ping `
-            --server-id="$env:SOURCE_SERVER_ID"
+            --server-id=source
+
 
           if ($LASTEXITCODE -ne 0) {
-              throw "VWG JFrog connection failed."
+
+              throw "Cannot connect to VWG Artifactory."
+
           }
 
 
+          Write-Host "VWG connection OK."
+
+
       # ==========================================================
-      # 7. VERIFY TARGET
+      # 8. VERIFY SCOUT CONNECTION
       # ==========================================================
 
-      - name: Verify Target Connection
+      - name: Verify Scout Connection
         shell: pwsh
+
         run: |
+
           $ErrorActionPreference = "Stop"
+
+
+          Write-Host "Testing Scout Artifactory..."
+
 
           jf rt ping `
-            --server-id="$env:TARGET_SERVER_ID"
+            --server-id=scout-artifactory
+
 
           if ($LASTEXITCODE -ne 0) {
-              throw "Scout JFrog connection failed."
+
+              throw "Cannot connect to Scout Artifactory."
+
           }
 
 
+          Write-Host "Scout connection OK."
+
+
       # ==========================================================
-      # 8. CLEAN LOCAL FOLDER
+      # 9. CLEAN LOCAL TEMP DIRECTORY
       # ==========================================================
 
-      - name: Clean Working Folder
+      - name: Clean Local Temp Folder
         shell: pwsh
+
         run: |
+
           $ErrorActionPreference = "Stop"
 
-          if (Test-Path -LiteralPath "$env:WORKING_FOLDER") {
+
+          Write-Host "Cleaning local staging directory..."
+
+
+          if (Test-Path -LiteralPath "$env:TEMP_FOLDER") {
+
               Remove-Item `
-                -LiteralPath "$env:WORKING_FOLDER" `
+                -LiteralPath "$env:TEMP_FOLDER" `
                 -Recurse `
                 -Force
+
           }
+
 
           New-Item `
             -ItemType Directory `
-            -Path "$env:WORKING_FOLDER" `
+            -Path "$env:TEMP_FOLDER" `
             -Force |
             Out-Null
 
-          Write-Host "Working folder ready:"
-          Write-Host "$env:WORKING_FOLDER"
+
+          Write-Host ""
+
+          Write-Host "Local staging folder:"
+
+          Write-Host "$env:TEMP_FOLDER"
 
 
       # ==========================================================
-      # 9. PARSE SOURCE URL
+      # 10. PARSE VWG SOURCE URL
       # ==========================================================
 
-      - name: Parse Source URL
-        id: parse
+      - name: Parse VWG Source URL
+        id: source
         shell: pwsh
+
         env:
+
           CONFIGURED_SOURCE_URL: ${{ secrets.SOURCE_URL }}
+
         run: |
+
           $ErrorActionPreference = "Stop"
 
-          $sourceUrl = "${{ inputs.source_url }}".Trim()
-          $releaseFolder = "${{ inputs.build_number }}".Trim()
+
+          $sourceUrl =
+              "${{ inputs.source_url }}".Trim()
+
 
           if (-not $sourceUrl) {
-              throw "source_url is empty."
+
+              throw "Source URL is empty."
+
           }
 
-          if (-not $releaseFolder) {
-              throw "build_number is empty."
-          }
 
           try {
-              $sourceUri = [System.Uri]$sourceUrl
+
+              $uri =
+                  [System.Uri]$sourceUrl
+
           }
           catch {
+
               throw "Source URL is invalid."
+
           }
+
 
           try {
-              $configuredSourceUri = [System.Uri]$env:CONFIGURED_SOURCE_URL
+
+              $configuredUri =
+                  [System.Uri]$env:CONFIGURED_SOURCE_URL
+
           }
           catch {
+
               throw "SOURCE_URL secret is invalid."
+
           }
 
-          if ($sourceUri.Host -ne $configuredSourceUri.Host) {
-              throw "Source URL host does not match SOURCE_URL."
+
+          if ($uri.Host -ne $configuredUri.Host) {
+
+              Write-Host "Input host      : $($uri.Host)"
+
+              Write-Host "Configured host : $($configuredUri.Host)"
+
+              throw "Source URL does not belong to configured VWG JFrog."
+
           }
 
-          $marker = "/artifactory/"
 
-          $markerPosition = $sourceUri.AbsolutePath.IndexOf(
-              $marker,
-              [System.StringComparison]::OrdinalIgnoreCase
-          )
+          $marker =
+              "/artifactory/"
 
-          if ($markerPosition -lt 0) {
+
+          $position =
+              $uri.AbsolutePath.IndexOf(
+                  $marker,
+                  [System.StringComparison]::OrdinalIgnoreCase
+              )
+
+
+          if ($position -lt 0) {
+
               throw "Source URL must contain /artifactory/."
+
           }
 
-          $artifactPath = $sourceUri.AbsolutePath.Substring(
-              $markerPosition + $marker.Length
-          )
 
-          $artifactPath = [System.Uri]::UnescapeDataString(
-              $artifactPath
-          )
+          $artifactPath =
+              $uri.AbsolutePath.Substring(
+                  $position + $marker.Length
+              )
 
-          $artifactPath = $artifactPath.Replace("\", "/")
-          $artifactPath = $artifactPath.Trim("/")
+
+          $artifactPath =
+              [System.Uri]::UnescapeDataString(
+                  $artifactPath
+              )
+
+
+          $artifactPath =
+              $artifactPath.Replace(
+                  "\",
+                  "/"
+              )
+
+
+          $artifactPath =
+              $artifactPath.Trim("/")
+
 
           if (-not $artifactPath) {
-              throw "Artifact path could not be determined."
+
+              throw "Unable to determine VWG artifact path."
+
           }
 
-          $firstSlash = $artifactPath.IndexOf("/")
-
-          if ($firstSlash -lt 1) {
-              throw "Repository could not be determined."
-          }
-
-          $sourceRepository = $artifactPath.Substring(
-              0,
-              $firstSlash
-          )
-
-          $sourceRelativePath = $artifactPath.Substring(
-              $firstSlash + 1
-          )
-
-          $sourceRelativePath = $sourceRelativePath.Trim("/")
-
-          if (-not $sourceRelativePath) {
-              throw "Source relative path could not be determined."
-          }
-
-          $sourcePattern = (
-              "$sourceRepository/" +
-              "$sourceRelativePath/*"
-          )
-
-          $targetBasePath = (
-              "$env:TARGET_REPOSITORY/" +
-              "$releaseFolder/" +
-              "$sourceRelativePath"
-          )
-
-          $targetPattern = "$targetBasePath/*"
 
           Write-Host ""
-          Write-Host "========================================"
-          Write-Host "JFROG MIGRATION"
-          Write-Host "========================================"
-          Write-Host "Source Repository : $sourceRepository"
-          Write-Host "Source Path       : $sourceRelativePath"
-          Write-Host "Source Pattern    : $sourcePattern"
-          Write-Host "Release           : $releaseFolder"
-          Write-Host "Target            : $targetBasePath"
-          Write-Host "========================================"
+
+          Write-Host "VWG Artifactory path:"
+
+          Write-Host "$artifactPath"
+
           Write-Host ""
 
-          "source_repository=$sourceRepository" |
-            Out-File `
-              "$env:GITHUB_OUTPUT" `
-              -Encoding utf8 `
-              -Append
 
-          "source_relative_path=$sourceRelativePath" |
-            Out-File `
-              "$env:GITHUB_OUTPUT" `
-              -Encoding utf8 `
-              -Append
-
-          "source_pattern=$sourcePattern" |
-            Out-File `
-              "$env:GITHUB_OUTPUT" `
-              -Encoding utf8 `
-              -Append
-
-          "target_path=$targetBasePath" |
-            Out-File `
-              "$env:GITHUB_OUTPUT" `
-              -Encoding utf8 `
-              -Append
-
-          "target_pattern=$targetPattern" |
+          "artifact_path=$artifactPath" |
             Out-File `
               "$env:GITHUB_OUTPUT" `
               -Encoding utf8 `
@@ -368,216 +453,461 @@ jobs:
 
 
       # ==========================================================
-      # 10. SEARCH SOURCE
+      # 11. CHECK VWG SOURCE
       # ==========================================================
 
-      - name: Search Source Files
+      - name: Check VWG Source
         shell: pwsh
+
         run: |
+
           $ErrorActionPreference = "Stop"
 
-          $sourcePattern = "${{ steps.parse.outputs.source_pattern }}"
 
-          Write-Host "Searching source:"
-          Write-Host "$sourcePattern"
+          $artifactPath =
+              "${{ steps.source.outputs.artifact_path }}"
+
+
+          $sourcePattern =
+              "$artifactPath/*"
+
+
           Write-Host ""
+
+          Write-Host "Checking VWG artifacts:"
+
+          Write-Host "$sourcePattern"
+
+          Write-Host ""
+
 
           jf rt search `
             "$sourcePattern" `
-            --server-id="$env:SOURCE_SERVER_ID" `
+            --server-id=source `
             --recursive=true `
             --include-dirs=false `
             --fail-no-op=true
 
-          if ($LASTEXITCODE -ne 0) {
-              throw "No source artifacts were found."
-          }
-
-
-      # ==========================================================
-      # 11. CHECK TARGET
-      #
-      # IMPORTANT:
-      # ZERO JSON PARSING HERE.
-      #
-      # Empty target is GOOD.
-      # Existing target is handled by overwrite option.
-      # ==========================================================
-
-      - name: Check Existing Target
-        id: target_check
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Continue"
-
-          $targetPattern = "${{ steps.parse.outputs.target_pattern }}"
-
-          Write-Host "Checking Scout target:"
-          Write-Host "$targetPattern"
-          Write-Host ""
-
-          jf rt search `
-            "$targetPattern" `
-            --server-id="$env:TARGET_SERVER_ID" `
-            --recursive=true `
-            --include-dirs=false `
-            --limit=1 `
-            --fail-no-op=true
-
-          $searchCode = $LASTEXITCODE
-
-          Write-Host ""
-          Write-Host "JFrog search exit code: $searchCode"
-
-          if ($searchCode -eq 0) {
-
-              Write-Host "Existing target artifacts found."
-
-              "target_exists=true" |
-                Out-File `
-                  "$env:GITHUB_OUTPUT" `
-                  -Encoding utf8 `
-                  -Append
-
-          }
-          else {
-
-              Write-Host "No target artifacts found."
-              Write-Host "The Scout destination is available."
-
-              "target_exists=false" |
-                Out-File `
-                  "$env:GITHUB_OUTPUT" `
-                  -Encoding utf8 `
-                  -Append
-
-          }
-
-          exit 0
-
-
-      # ==========================================================
-      # 12. STOP IF TARGET EXISTS
-      # ==========================================================
-
-      - name: Stop If Target Exists
-        if: >-
-          steps.target_check.outputs.target_exists == 'true' &&
-          inputs.overwrite_existing == false
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host "Target already exists:"
-          Write-Host "${{ steps.parse.outputs.target_path }}"
-
-          throw "Target exists. Enable overwrite_existing to replace it."
-
-
-      # ==========================================================
-      # 13. DELETE TARGET IF OVERWRITE
-      # ==========================================================
-
-      - name: Delete Existing Target
-        if: >-
-          steps.target_check.outputs.target_exists == 'true' &&
-          inputs.overwrite_existing == true
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $targetPath = "${{ steps.parse.outputs.target_path }}"
-
-          Write-Host "Deleting:"
-          Write-Host "$targetPath/"
-
-          jf rt delete `
-            "$targetPath/" `
-            --server-id="$env:TARGET_SERVER_ID" `
-            --recursive=true `
-            --quiet
 
           if ($LASTEXITCODE -ne 0) {
-              throw "Failed to delete existing target."
+
+              throw "No artifacts found at the supplied VWG URL."
+
           }
 
 
       # ==========================================================
-      # 14. DOWNLOAD FROM VWG
+      # 12. DOWNLOAD VWG -> LOCAL TEMP
       # ==========================================================
 
-      - name: Download Files
+      - name: Download VWG Artifacts To Local Temp
         shell: pwsh
+
         run: |
+
           $ErrorActionPreference = "Stop"
 
-          $sourcePattern = "${{ steps.parse.outputs.source_pattern }}"
 
-          Write-Host "Downloading:"
+          $artifactPath =
+              "${{ steps.source.outputs.artifact_path }}"
+
+
+          $sourcePattern =
+              "$artifactPath/*"
+
+
+          Write-Host ""
+
+          Write-Host "=========================================="
+
+          Write-Host "DOWNLOAD"
+
+          Write-Host "=========================================="
+
+          Write-Host ""
+
+          Write-Host "FROM VWG:"
+
           Write-Host "$sourcePattern"
+
           Write-Host ""
-          Write-Host "Local folder:"
-          Write-Host "$env:WORKING_FOLDER"
+
+          Write-Host "TO LOCAL:"
+
+          Write-Host "$env:TEMP_FOLDER"
+
           Write-Host ""
+
 
           jf rt download `
             "$sourcePattern" `
-            "$env:WORKING_FOLDER/" `
-            --server-id="$env:SOURCE_SERVER_ID" `
+            "$env:TEMP_FOLDER/" `
+            --server-id=source `
             --recursive=true `
-            --flat=false `
+            --flat=true `
             --include-dirs=true `
             --fail-no-op=true `
             --threads=8
 
+
           if ($LASTEXITCODE -ne 0) {
-              throw "Download from VWG JFrog failed."
-          }
 
-
-      # ==========================================================
-      # 15. FIND ACTUAL DOWNLOADED FOLDER
-      # ==========================================================
-
-      - name: Prepare Downloaded Files
-        id: files
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $sourceRepository = "${{ steps.parse.outputs.source_repository }}"
-
-          $sourceRelativePath = "${{ steps.parse.outputs.source_relative_path }}"
-
-          $windowsRelativePath = $sourceRelativePath.Replace(
-              "/",
-              "\"
-          )
-
-          $fullPath = Join-Path `
-              "$env:WORKING_FOLDER" `
-              "$sourceRepository\$windowsRelativePath"
-
-          $withoutRepo = Join-Path `
-              "$env:WORKING_FOLDER" `
-              "$windowsRelativePath"
-
-          if (Test-Path -LiteralPath "$fullPath") {
-
-              $localSource = $fullPath
+              throw "VWG artifact download failed."
 
           }
-          elseif (Test-Path -LiteralPath "$withoutRepo") {
 
-              $localSource = $withoutRepo
-
-          }
-          else {
-
-              $localSource = "$env:WORKING_FOLDER"
-
-          }
 
           Write-Host ""
-          Write-Host "Local source folder:"
-       
+
+          Write-Host "Download completed."
+
+
+      # ==========================================================
+      # 13. VERIFY LOCAL TEMP
+      # ==========================================================
+
+      - name: Verify Local Download
+        id: local
+        shell: pwsh
+
+        run: |
+
+          $ErrorActionPreference = "Stop"
+
+
+          Write-Host ""
+
+          Write-Host "Files saved locally:"
+
+          Write-Host "=========================================="
+
+
+          $files =
+              @(
+                  Get-ChildItem `
+                    -LiteralPath "$env:TEMP_FOLDER" `
+                    -Recurse `
+                    -File
+              )
+
+
+          if ($files.Count -eq 0) {
+
+              throw "No files exist in C:\Temp\Artifacts."
+
+          }
+
+
+          foreach ($file in $files) {
+
+              Write-Host "$($file.FullName)"
+
+          }
+
+
+          Write-Host ""
+
+          Write-Host "Local file count: $($files.Count)"
+
+
+          "file_count=$($files.Count)" |
+            Out-File `
+              "$env:GITHUB_OUTPUT" `
+              -Encoding utf8 `
+              -Append
+
+
+      # ==========================================================
+      # 14. BUILD SCOUT DESTINATION
+      # ==========================================================
+
+      - name: Build Scout Destination
+        id: target
+        shell: pwsh
+
+        run: |
+
+          $ErrorActionPreference = "Stop"
+
+
+          $release =
+              "${{ inputs.build_number }}".Trim()
+
+
+          if (-not $release) {
+
+              throw "Destination build/release is empty."
+
+          }
+
+
+          $targetPath =
+              "$env:TARGET_REPOSITORY/$release"
+
+
+          Write-Host ""
+
+          Write-Host "Scout destination:"
+
+          Write-Host "$targetPath/"
+
+
+          "target_path=$targetPath" |
+            Out-File `
+              "$env:GITHUB_OUTPUT" `
+              -Encoding utf8 `
+              -Append
+
+
+      # ==========================================================
+      # 15. PREVIEW LOCAL -> SCOUT
+      # ==========================================================
+
+      - name: Preview Scout Upload
+        shell: pwsh
+
+        run: |
+
+          $ErrorActionPreference = "Stop"
+
+
+          $targetPath =
+              "${{ steps.target.outputs.target_path }}"
+
+
+          Write-Host ""
+
+          Write-Host "=========================================="
+
+          Write-Host "UPLOAD PREVIEW"
+
+          Write-Host "=========================================="
+
+          Write-Host ""
+
+          Write-Host "FROM LOCAL:"
+
+          Write-Host "$env:TEMP_FOLDER"
+
+          Write-Host ""
+
+          Write-Host "TO SCOUT:"
+
+          Write-Host "$targetPath/"
+
+          Write-Host ""
+
+
+          Push-Location "$env:TEMP_FOLDER"
+
+
+          try {
+
+              jf rt upload `
+                "./*" `
+                "$targetPath/" `
+                --server-id=scout-artifactory `
+                --recursive=true `
+                --flat=false `
+                --dry-run
+
+          }
+          finally {
+
+              Pop-Location
+
+          }
+
+
+      # ==========================================================
+      # 16. UPLOAD LOCAL TEMP -> SCOUT
+      # ==========================================================
+
+      - name: Upload Local Artifacts To Scout
+        shell: pwsh
+
+        run: |
+
+          $ErrorActionPreference = "Stop"
+
+
+          $targetPath =
+              "${{ steps.target.outputs.target_path }}"
+
+
+          Write-Host ""
+
+          Write-Host "=========================================="
+
+          Write-Host "UPLOAD"
+
+          Write-Host "=========================================="
+
+          Write-Host ""
+
+          Write-Host "FROM LOCAL:"
+
+          Write-Host "$env:TEMP_FOLDER"
+
+          Write-Host ""
+
+          Write-Host "TO SCOUT:"
+
+          Write-Host "$targetPath/"
+
+          Write-Host ""
+
+
+          Push-Location "$env:TEMP_FOLDER"
+
+
+          try {
+
+              jf rt upload `
+                "./*" `
+                "$targetPath/" `
+                --server-id=scout-artifactory `
+                --recursive=true `
+                --flat=false `
+                --fail-no-op=true `
+                --threads=8
+
+
+              if ($LASTEXITCODE -ne 0) {
+
+                  throw "Scout upload failed."
+
+              }
+
+          }
+          finally {
+
+              Pop-Location
+
+          }
+
+
+          Write-Host ""
+
+          Write-Host "Scout upload completed."
+
+
+      # ==========================================================
+      # 17. VERIFY SCOUT
+      # ==========================================================
+
+      - name: Verify Scout Upload
+        shell: pwsh
+
+        run: |
+
+          $ErrorActionPreference = "Stop"
+
+
+          $targetPath =
+              "${{ steps.target.outputs.target_path }}"
+
+
+          Write-Host ""
+
+          Write-Host "Verifying Scout artifacts:"
+
+          Write-Host "$targetPath/*"
+
+          Write-Host ""
+
+
+          jf rt search `
+            "$targetPath/*" `
+            --server-id=scout-artifactory `
+            --recursive=true `
+            --include-dirs=false `
+            --fail-no-op=true
+
+
+          if ($LASTEXITCODE -ne 0) {
+
+              throw "Scout verification failed."
+
+          }
+
+
+          Write-Host ""
+
+          Write-Host "Scout upload verified."
+
+
+      # ==========================================================
+      # 18. SUMMARY
+      # ==========================================================
+
+      - name: Migration Summary
+        if: success()
+        shell: pwsh
+
+        run: |
+
+          Write-Host ""
+
+          Write-Host "=========================================="
+
+          Write-Host "JFROG ARTIFACT TRANSFER COMPLETED"
+
+          Write-Host "=========================================="
+
+          Write-Host ""
+
+          Write-Host "VWG SOURCE"
+
+          Write-Host "${{ inputs.source_url }}"
+
+          Write-Host ""
+
+          Write-Host "LOCAL STAGING"
+
+          Write-Host "$env:TEMP_FOLDER"
+
+          Write-Host ""
+
+          Write-Host "SCOUT TARGET"
+
+          Write-Host "${{ steps.target.outputs.target_path }}"
+
+          Write-Host ""
+
+          Write-Host "FILES TRANSFERRED"
+
+          Write-Host "${{ steps.local.outputs.file_count }}"
+
+          Write-Host ""
+
+          Write-Host "=========================================="
+
+
+      # ==========================================================
+      # 19. CLEAN TEMP
+      # ==========================================================
+
+      - name: Cleanup Local Temp
+        if: always()
+        shell: pwsh
+        continue-on-error: true
+
+        run: |
+
+          if (Test-Path -LiteralPath "$env:TEMP_FOLDER") {
+
+              Remove-Item `
+                -LiteralPath "$env:TEMP_FOLDER" `
+                -Recurse `
+                -Force
+
+          }
+
+
+          jf c rm source --quiet
+
+          jf c rm scout-artifactory --quiet
+
+
+          Write-Host "Local temporary files removed."
