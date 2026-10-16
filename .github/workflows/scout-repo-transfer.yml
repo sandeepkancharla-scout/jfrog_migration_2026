@@ -1,0 +1,531 @@
+name: Scout JFrog Repo Transfer
+
+run-name: >-
+  Scout Repo Transfer to
+  ${{ inputs.target_repository }}/${{ inputs.target_folder }}
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      source_url:
+        description: "Source Scout JFrog folder URL"
+        required: true
+        type: string
+
+      target_repository:
+        description: "Target Scout JFrog repository"
+        required: true
+        type: string
+
+      target_folder:
+        description: "Target folder (Ex: demo, 39.100, CW29-39.100)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+
+  transfer:
+
+    name: Scout Repository Transfer
+
+    runs-on:
+      - self-hosted
+      - Windows
+
+    timeout-minutes: 180
+
+    env:
+
+      SCOUT_SERVER_ID: scout-artifactory
+
+      JFROG_CLI_OFFER_CONFIG: "false"
+
+      JFROG_CLI_LOG_LEVEL: INFO
+
+    steps:
+
+      # ==========================================================
+      # 1. SETUP JFROG CLI
+      # ==========================================================
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+        env:
+          JF_URL: ${{ secrets.TARGET_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
+
+
+      # ==========================================================
+      # 2. VERIFY JFROG CLI
+      # ==========================================================
+
+      - name: Show JFrog CLI Version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          jf --version
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "JFrog CLI is not available."
+          }
+
+
+      # ==========================================================
+      # 3. VALIDATE SCOUT SECRETS
+      # ==========================================================
+
+      - name: Validate Scout Secrets
+        shell: pwsh
+        env:
+          SCOUT_URL: ${{ secrets.TARGET_URL }}
+          SCOUT_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          if (-not $env:SCOUT_URL) {
+              throw "TARGET_URL secret is missing."
+          }
+
+          if (-not $env:SCOUT_ACCESS_TOKEN) {
+              throw "TARGET_ACCESS_TOKEN secret is missing."
+          }
+
+          Write-Host "Scout secrets are available."
+
+
+      # ==========================================================
+      # 4. CLEAN EXISTING CONFIG
+      # ==========================================================
+
+      - name: Cleanup Existing Scout Config
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          jf c rm "$env:SCOUT_SERVER_ID" --quiet
+
+
+      # ==========================================================
+      # 5. CONFIGURE SCOUT ARTIFACTORY
+      # ==========================================================
+
+      - name: Configure Scout Artifactory
+        shell: pwsh
+        env:
+          SCOUT_URL: ${{ secrets.TARGET_URL }}
+          SCOUT_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          jf c add "$env:SCOUT_SERVER_ID" `
+            --url="$env:SCOUT_URL" `
+            --access-token="$env:SCOUT_ACCESS_TOKEN" `
+            --interactive=false `
+            --overwrite=true
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Failed to configure Scout Artifactory."
+          }
+
+          Write-Host "Scout Artifactory configured."
+
+
+      # ==========================================================
+      # 6. VERIFY CONNECTION
+      # ==========================================================
+
+      - name: Verify Scout Connection
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          jf rt ping `
+            --server-id="$env:SCOUT_SERVER_ID"
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Cannot connect to Scout Artifactory."
+          }
+
+          Write-Host "Scout connection OK."
+
+
+      # ==========================================================
+      # 7. PARSE SOURCE URL
+      # ==========================================================
+
+      - name: Parse Source URL
+        id: source
+        shell: pwsh
+        env:
+          SCOUT_URL: ${{ secrets.TARGET_URL }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sourceUrl = "${{ inputs.source_url }}".Trim()
+
+          if (-not $sourceUrl) {
+              throw "Source URL is empty."
+          }
+
+          try {
+              $sourceUri = [System.Uri]$sourceUrl
+          }
+          catch {
+              throw "Source URL is invalid."
+          }
+
+          try {
+              $scoutUri = [System.Uri]$env:SCOUT_URL
+          }
+          catch {
+              throw "TARGET_URL is invalid."
+          }
+
+          if ($sourceUri.Host -ne $scoutUri.Host) {
+              Write-Host "Source host : $($sourceUri.Host)"
+              Write-Host "Scout host  : $($scoutUri.Host)"
+
+              throw "Source URL is not from the configured Scout Artifactory."
+          }
+
+          $marker = "/artifactory/"
+
+          $position = $sourceUri.AbsolutePath.IndexOf(
+              $marker,
+              [System.StringComparison]::OrdinalIgnoreCase
+          )
+
+          if ($position -lt 0) {
+              throw "Source URL must contain /artifactory/."
+          }
+
+          $sourcePath = $sourceUri.AbsolutePath.Substring(
+              $position + $marker.Length
+          )
+
+          $sourcePath = [System.Uri]::UnescapeDataString(
+              $sourcePath
+          )
+
+          $sourcePath = $sourcePath.Replace("\", "/")
+          $sourcePath = $sourcePath.Trim("/")
+
+          if (-not $sourcePath) {
+              throw "Unable to determine source Artifactory path."
+          }
+
+          if ($sourcePath.Contains("..")) {
+              throw "Source path cannot contain '..'."
+          }
+
+          $firstSlash = $sourcePath.IndexOf("/")
+
+          if ($firstSlash -lt 1) {
+              throw "Source URL must include a repository and folder."
+          }
+
+          $sourceRepository = $sourcePath.Substring(
+              0,
+              $firstSlash
+          )
+
+          $sourceFolder = $sourcePath.Substring(
+              $firstSlash + 1
+          )
+
+          $sourceFolder = $sourceFolder.Trim("/")
+
+          if (-not $sourceFolder) {
+              throw "Source folder could not be determined."
+          }
+
+          Write-Host ""
+          Write-Host "Source repository:"
+          Write-Host "$sourceRepository"
+
+          Write-Host ""
+          Write-Host "Source folder:"
+          Write-Host "$sourceFolder"
+
+          Write-Host ""
+          Write-Host "Complete source path:"
+          Write-Host "$sourcePath"
+
+          "source_path=$sourcePath" |
+            Out-File `
+              "$env:GITHUB_OUTPUT" `
+              -Encoding utf8 `
+              -Append
+
+          "source_repository=$sourceRepository" |
+            Out-File `
+              "$env:GITHUB_OUTPUT" `
+              -Encoding utf8 `
+              -Append
+
+          "source_folder=$sourceFolder" |
+            Out-File `
+              "$env:GITHUB_OUTPUT" `
+              -Encoding utf8 `
+              -Append
+
+
+      # ==========================================================
+      # 8. BUILD TARGET PATH
+      # ==========================================================
+
+      - name: Build Target Path
+        id: target
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $targetRepository = "${{ inputs.target_repository }}".Trim()
+          $targetFolder = "${{ inputs.target_folder }}".Trim()
+
+          if (-not $targetRepository) {
+              throw "Target repository is empty."
+          }
+
+          if (-not $targetFolder) {
+              throw "Target folder is empty."
+          }
+
+          if ($targetRepository.Contains("..")) {
+              throw "Target repository contains an invalid path."
+          }
+
+          if ($targetFolder.Contains("..")) {
+              throw "Target folder contains an invalid path."
+          }
+
+          $targetRepository = $targetRepository.Trim("/")
+          $targetFolder = $targetFolder.Trim("/")
+
+          $targetPath = "$targetRepository/$targetFolder"
+
+          Write-Host ""
+          Write-Host "Target repository:"
+          Write-Host "$targetRepository"
+
+          Write-Host ""
+          Write-Host "Target folder:"
+          Write-Host "$targetFolder"
+
+          Write-Host ""
+          Write-Host "Complete target path:"
+          Write-Host "$targetPath"
+
+          "target_path=$targetPath" |
+            Out-File `
+              "$env:GITHUB_OUTPUT" `
+              -Encoding utf8 `
+              -Append
+
+
+      # ==========================================================
+      # 9. DISPLAY COPY PLAN
+      # ==========================================================
+
+      - name: Display Copy Plan
+        shell: pwsh
+        run: |
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host "SCOUT JFROG REPOSITORY COPY"
+          Write-Host "================================================"
+          Write-Host ""
+
+          Write-Host "SOURCE:"
+          Write-Host "${{ steps.source.outputs.source_path }}/"
+
+          Write-Host ""
+          Write-Host "TARGET:"
+          Write-Host "${{ steps.target.outputs.target_path }}/"
+
+          Write-Host ""
+          Write-Host "Folder hierarchy beneath the source folder"
+          Write-Host "will be preserved in the destination."
+
+          Write-Host ""
+          Write-Host "================================================"
+
+
+      # ==========================================================
+      # 10. VERIFY SOURCE EXISTS
+      # ==========================================================
+
+      - name: Verify Source Artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sourcePath = "${{ steps.source.outputs.source_path }}"
+
+          Write-Host ""
+          Write-Host "Searching source:"
+          Write-Host "$sourcePath/*"
+          Write-Host ""
+
+          jf rt search `
+            "$sourcePath/*" `
+            --server-id="$env:SCOUT_SERVER_ID" `
+            --recursive=true `
+            --include-dirs=false `
+            --fail-no-op=true
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "No artifacts were found under the source folder."
+          }
+
+
+      # ==========================================================
+      # 11. COPY PREVIEW
+      # ==========================================================
+
+      - name: Preview Repository Copy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sourcePath = "${{ steps.source.outputs.source_path }}"
+          $targetPath = "${{ steps.target.outputs.target_path }}"
+
+          Write-Host ""
+          Write-Host "COPY PREVIEW"
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "FROM:"
+          Write-Host "$sourcePath/"
+          Write-Host ""
+          Write-Host "TO:"
+          Write-Host "$targetPath/"
+          Write-Host ""
+
+          jf rt copy `
+            "$sourcePath/" `
+            "$targetPath/" `
+            --server-id="$env:SCOUT_SERVER_ID" `
+            --recursive=true `
+            --flat=true `
+            --dry-run
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "JFrog copy preview failed."
+          }
+
+
+      # ==========================================================
+      # 12. COPY ARTIFACTS
+      # ==========================================================
+
+      - name: Copy Artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sourcePath = "${{ steps.source.outputs.source_path }}"
+          $targetPath = "${{ steps.target.outputs.target_path }}"
+
+          Write-Host ""
+          Write-Host "COPYING"
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "FROM:"
+          Write-Host "$sourcePath/"
+          Write-Host ""
+          Write-Host "TO:"
+          Write-Host "$targetPath/"
+          Write-Host ""
+
+          jf rt copy `
+            "$sourcePath/" `
+            "$targetPath/" `
+            --server-id="$env:SCOUT_SERVER_ID" `
+            --recursive=true `
+            --flat=true `
+            --threads=8 `
+            --fail-no-op=true
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Scout repository copy failed."
+          }
+
+          Write-Host ""
+          Write-Host "Repository copy completed."
+
+
+      # ==========================================================
+      # 13. VERIFY TARGET
+      # ==========================================================
+
+      - name: Verify Target Artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $targetPath = "${{ steps.target.outputs.target_path }}"
+
+          Write-Host ""
+          Write-Host "Verifying:"
+          Write-Host "$targetPath/*"
+          Write-Host ""
+
+          jf rt search `
+            "$targetPath/*" `
+            --server-id="$env:SCOUT_SERVER_ID" `
+            --recursive=true `
+            --include-dirs=false `
+            --fail-no-op=true
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Target verification failed."
+          }
+
+          Write-Host ""
+          Write-Host "Target artifacts verified."
+
+
+      # ==========================================================
+      # 14. SUMMARY
+      # ==========================================================
+
+      - name: Transfer Summary
+        if: success()
+        shell: pwsh
+        run: |
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "SCOUT REPOSITORY TRANSFER COMPLETE"
+          Write-Host "=========================================="
+          Write-Host ""
+
+          Write-Host "SOURCE:"
+          Write-Host "${{ steps.source.outputs.source_path }}/"
+
+          Write-Host ""
+          Write-Host "TARGET:"
+          Write-Host "${{ steps.target.outputs.target_path }}/"
+
+          Write-Host ""
+          Write-Host "=========================================="
+
+
+      # ==========================================================
+      # 15. CLEANUP
+      # ==========================================================
+
+      - name: Cleanup JFrog Configuration
+        if: always()
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          jf c rm "$env:SCOUT_SERVER_ID" --quiet
+
+          Write-Host "Scout JFrog configuration removed."
