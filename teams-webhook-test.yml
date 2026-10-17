@@ -1,22 +1,19 @@
 name: Test Teams Webhook
 
 on:
-  workflow_dispatch:
-
   pull_request:
     branches:
       - main
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: read
 
 jobs:
   test-teams:
-
-    # The PR trigger only registers/tests the workflow.
-    # The actual Teams webhook call runs only for manual dispatch.
-    if: github.event_name == 'workflow_dispatch'
-
     name: Test Teams Notification
 
     runs-on:
@@ -43,7 +40,7 @@ jobs:
           Write-Host 'Teams webhook secret is available.'
 
       # ==========================================================
-      # 2. SEND TEST MESSAGE
+      # 2. SEND TEST NOTIFICATION
       # ==========================================================
 
       - name: Send Teams Test Notification
@@ -51,25 +48,27 @@ jobs:
         env:
           TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
           REPOSITORY_NAME: ${{ github.repository }}
-          BRANCH_NAME: ${{ github.ref_name }}
+          BRANCH_NAME: ${{ github.head_ref }}
           REQUESTED_BY: ${{ github.actor }}
           RUN_ID: ${{ github.run_id }}
         run: |
           $ErrorActionPreference = 'Stop'
 
+          $message = (
+              'Scout JFrog Approval POC Test' +
+              "`nRepository: " + $env:REPOSITORY_NAME +
+              "`nBranch: " + $env:BRANCH_NAME +
+              "`nRequested by: " + $env:REQUESTED_BY +
+              "`nRun ID: " + $env:RUN_ID
+          )
+
           $payload = @{
-              text = (
-                  'Scout approval POC test from GitHub Actions.' +
-                  ' Repository: ' + $env:REPOSITORY_NAME +
-                  '. Branch: ' + $env:BRANCH_NAME +
-                  '. Requested by: ' + $env:REQUESTED_BY +
-                  '. Run ID: ' + $env:RUN_ID
-              )
+              text = $message
           }
 
           $json = $payload | ConvertTo-Json -Depth 10
 
-          Write-Host 'Sending test notification to Teams...'
+          Write-Host 'Sending notification to Teams...'
 
           try {
               $response = Invoke-RestMethod `
@@ -85,7 +84,7 @@ jobs:
               throw
           }
 
-          Write-Host 'Teams webhook request completed successfully.'
+          Write-Host 'Teams webhook request sent successfully.'
 
       # ==========================================================
       # 3. SUMMARY
@@ -93,11 +92,15 @@ jobs:
 
       - name: Test Summary
         shell: pwsh
+        env:
+          REPOSITORY_NAME: ${{ github.repository }}
+          BRANCH_NAME: ${{ github.head_ref }}
+          REQUESTED_BY: ${{ github.actor }}
         run: |
-          Write-Host 'Teams webhook POC completed.'
+          Write-Host 'Teams webhook test completed.'
           Write-Host 'Repository:'
-          Write-Host '${{ github.repository }}'
+          Write-Host $env:REPOSITORY_NAME
           Write-Host 'Branch:'
-          Write-Host '${{ github.ref_name }}'
+          Write-Host $env:BRANCH_NAME
           Write-Host 'Requested by:'
-          Write-Host '${{ github.actor }}'
+          Write-Host $env:REQUESTED_BY
