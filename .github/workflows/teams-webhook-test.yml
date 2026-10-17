@@ -17,6 +17,10 @@ jobs:
 
     steps:
 
+      # ==========================================================
+      # 1. VALIDATE TEAMS WEBHOOK SECRET
+      # ==========================================================
+
       - name: Validate Teams Webhook Secret
         shell: pwsh
         env:
@@ -30,6 +34,11 @@ jobs:
 
           Write-Host 'Teams webhook secret is available.'
 
+
+      # ==========================================================
+      # 2. SEND ADAPTIVE CARD
+      # ==========================================================
+
       - name: Send Teams Test Notification
         shell: pwsh
         env:
@@ -41,41 +50,107 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $message = @"
-          Scout JFrog Approval POC Test
-
-          Repository: $env:REPOSITORY_NAME
-          Branch: $env:BRANCH_NAME
-          Requested by: $env:REQUESTED_BY
-          Run ID: $env:RUN_ID
-          "@
-
           $payload = @{
-              text = $message
+              type = 'message'
+
+              attachments = @(
+                  @{
+                      contentType = 'application/vnd.microsoft.card.adaptive'
+
+                      content = @{
+                          '$schema' = 'http://adaptivecards.io/schemas/adaptive-card.json'
+
+                          type = 'AdaptiveCard'
+
+                          version = '1.2'
+
+                          body = @(
+
+                              @{
+                                  type = 'TextBlock'
+                                  size = 'Large'
+                                  weight = 'Bolder'
+                                  text = 'Scout JFrog Approval POC'
+                              }
+
+                              @{
+                                  type = 'TextBlock'
+                                  text = 'GitHub to Microsoft Teams webhook test succeeded.'
+                                  wrap = $true
+                              }
+
+                              @{
+                                  type = 'FactSet'
+
+                                  facts = @(
+
+                                      @{
+                                          title = 'Repository'
+                                          value = $env:REPOSITORY_NAME
+                                      }
+
+                                      @{
+                                          title = 'Branch'
+                                          value = $env:BRANCH_NAME
+                                      }
+
+                                      @{
+                                          title = 'Requested By'
+                                          value = $env:REQUESTED_BY
+                                      }
+
+                                      @{
+                                          title = 'Run ID'
+                                          value = $env:RUN_ID
+                                      }
+
+                                  )
+                              }
+
+                          )
+                      }
+                  }
+              )
           }
 
-          $json = $payload | ConvertTo-Json -Depth 10
 
-          Write-Host 'Sending Teams notification.'
+          $json = $payload |
+              ConvertTo-Json -Depth 20
+
+
+          Write-Host 'Sending Adaptive Card to Teams...'
+
 
           try {
+
               Invoke-RestMethod `
                   -Uri $env:TEAMS_WEBHOOK_URL `
                   -Method Post `
                   -ContentType 'application/json' `
                   -Body $json `
                   -ErrorAction Stop
+
           }
           catch {
+
               Write-Host 'Teams webhook request failed.'
+
               Write-Host $_.Exception.Message
+
               throw
+
           }
 
-          Write-Host 'Teams webhook request sent successfully.'
+
+          Write-Host 'Teams Adaptive Card request sent successfully.'
+
+
+      # ==========================================================
+      # 3. SUMMARY
+      # ==========================================================
 
       - name: Test Summary
         shell: pwsh
         run: |
-          Write-Host 'Teams webhook POC completed.'
-          Write-Host 'Check the configured Teams destination for the message.'
+          Write-Host 'Teams webhook test completed.'
+          Write-Host 'Check the configured Teams chat for the Adaptive Card.'
