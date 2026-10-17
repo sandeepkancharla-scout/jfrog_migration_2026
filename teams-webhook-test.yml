@@ -1,0 +1,55 @@
+name: Test Teams Webhook
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-teams:
+    name: Test Teams Notification
+
+    runs-on:
+      - self-hosted
+      - Windows
+
+    steps:
+
+      - name: Validate Teams Webhook Secret
+        shell: pwsh
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (-not $env:TEAMS_WEBHOOK_URL) {
+              throw 'TEAMS_WEBHOOK_URL secret is missing.'
+          }
+
+          Write-Host 'Teams webhook secret is available.'
+
+      - name: Send Teams Test Notification
+        shell: pwsh
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          REPOSITORY: ${{ github.repository }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          REQUESTED_BY: ${{ github.actor }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $payload = @{
+              text = "Scout approval POC test from GitHub Actions. Repository: $env:REPOSITORY. Branch: $env:BRANCH_NAME. Requested by: $env:REQUESTED_BY. Run ID: $env:RUN_ID."
+          }
+
+          $json = $payload | ConvertTo-Json -Depth 10
+
+          Invoke-RestMethod `
+              -Uri $env:TEAMS_WEBHOOK_URL `
+              -Method Post `
+              -ContentType 'application/json' `
+              -Body $json
+
+          Write-Host 'Teams webhook request sent successfully.'
