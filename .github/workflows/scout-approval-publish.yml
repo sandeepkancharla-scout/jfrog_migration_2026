@@ -3,15 +3,10 @@ name: Scout Approval Publish
 run-name: Scout Approved Artifact Publish
 
 on:
-
-  # Keep this unfiltered because this is the repository_dispatch
-  # configuration already proven with Power Automate.
   repository_dispatch:
 
-  # Keep manual execution for isolated troubleshooting.
   workflow_dispatch:
     inputs:
-
       source_url:
         description: "Full Scout JFrog source folder URL"
         required: false
@@ -24,23 +19,15 @@ on:
 
 
 # ================================================================
-# CONCURRENCY
-#
-# Prevent multiple artifact publish workflows from building up.
-#
-# During testing, when a new publish request arrives, GitHub requests
-# cancellation of the older run in this concurrency group.
+# PREVENT MULTIPLE PUBLISH RUNS FROM STACKING UP
 # ================================================================
 
 concurrency:
-
   group: scout-approved-artifact-publish
-
   cancel-in-progress: true
 
 
 permissions:
-
   contents: read
 
 
@@ -54,123 +41,84 @@ jobs:
       - self-hosted
       - Windows
 
-    # Keep the debugging timeout intentionally short.
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     env:
-
       SCOUT_SERVER_ID: scout-approved-publish
 
       JFROG_CLI_OFFER_CONFIG: "false"
-
       JFROG_CLI_LOG_LEVEL: INFO
 
 
     steps:
-
 
       # ==========================================================
       # 1. RESOLVE APPROVED INPUTS
       # ==========================================================
 
       - name: Resolve Approval Inputs
-
         id: request
-
         shell: pwsh
 
         env:
-
           EVENT_NAME: ${{ github.event_name }}
 
           DISPATCH_SOURCE_URL: ${{ github.event.client_payload.source_url }}
-
           DISPATCH_TARGET_URL: ${{ github.event.client_payload.target_url }}
 
           MANUAL_SOURCE_URL: ${{ inputs.source_url }}
-
           MANUAL_TARGET_URL: ${{ inputs.target_url }}
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
-
           Write-Host 'Trigger:'
-
           Write-Host $env:EVENT_NAME
 
-
-          # ------------------------------------------------------
-          # Repository dispatch comes from Power Automate.
-          #
-          # workflow_dispatch is retained only for troubleshooting.
-          # ------------------------------------------------------
 
           if ($env:EVENT_NAME -eq 'repository_dispatch') {
 
               $sourceUrl = $env:DISPATCH_SOURCE_URL
-
               $targetUrl = $env:DISPATCH_TARGET_URL
 
           }
           else {
 
               $sourceUrl = $env:MANUAL_SOURCE_URL
-
               $targetUrl = $env:MANUAL_TARGET_URL
 
           }
 
 
           if (-not $sourceUrl) {
-
               throw 'Source URL was not provided.'
-
           }
 
 
           if (-not $targetUrl) {
-
               throw 'Target URL was not provided.'
-
           }
 
 
           $sourceUrl = $sourceUrl.Trim()
-
           $targetUrl = $targetUrl.Trim()
 
-
-          # ------------------------------------------------------
-          # Tracking identifier belongs to GitHub.
-          # Power Automate does not need to provide it.
-          # ------------------------------------------------------
 
           $requestId = "SCOUT-${{ github.run_id }}"
 
 
           Write-Host ''
-
           Write-Host '========================================'
-
           Write-Host 'APPROVED SCOUT PUBLISH REQUEST'
-
           Write-Host '========================================'
-
 
           Write-Host 'Request ID:'
-
           Write-Host $requestId
 
-
           Write-Host 'Source URL:'
-
           Write-Host $sourceUrl
 
-
           Write-Host 'Target URL:'
-
           Write-Host $targetUrl
 
 
@@ -195,25 +143,19 @@ jobs:
                   -Append
 
 
-
       # ==========================================================
       # 2. SETUP JFROG CLI
       # ==========================================================
 
       - name: Setup JFrog CLI
-
         uses: jfrog/setup-jfrog-cli@v4
 
         with:
-
           disable-auto-build-publish: true
 
         env:
-
           JF_URL: ${{ secrets.TARGET_URL }}
-
           JF_ACCESS_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
-
 
 
       # ==========================================================
@@ -221,23 +163,16 @@ jobs:
       # ==========================================================
 
       - name: Verify JFrog CLI
-
         shell: pwsh
 
         run: |
-
           $ErrorActionPreference = 'Stop'
-
 
           jf --version
 
-
           if ($LASTEXITCODE -ne 0) {
-
               throw 'JFrog CLI is not available.'
-
           }
-
 
 
       # ==========================================================
@@ -245,54 +180,39 @@ jobs:
       # ==========================================================
 
       - name: Validate Scout Credentials
-
         shell: pwsh
 
         env:
-
           SCOUT_URL: ${{ secrets.TARGET_URL }}
-
           SCOUT_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
 
           if (-not $env:SCOUT_URL) {
-
               throw 'TARGET_URL secret is missing.'
-
           }
 
 
           if (-not $env:SCOUT_TOKEN) {
-
               throw 'TARGET_ACCESS_TOKEN secret is missing.'
-
           }
 
 
           Write-Host 'Scout JFrog credentials are available.'
 
 
-
       # ==========================================================
-      # 5. CLEAN OLD JFROG CONFIGURATION
+      # 5. CLEAN EXISTING CONFIG
       # ==========================================================
 
       - name: Cleanup Existing Scout Configuration
-
         shell: pwsh
-
         continue-on-error: true
 
         run: |
-
-          jf c rm `
-              "$env:SCOUT_SERVER_ID" `
-              --quiet
-
+          jf c rm "$env:SCOUT_SERVER_ID" --quiet
 
 
       # ==========================================================
@@ -300,17 +220,13 @@ jobs:
       # ==========================================================
 
       - name: Configure Scout JFrog
-
         shell: pwsh
 
         env:
-
           SCOUT_URL: ${{ secrets.TARGET_URL }}
-
           SCOUT_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
 
@@ -323,14 +239,11 @@ jobs:
 
 
           if ($LASTEXITCODE -ne 0) {
-
               throw 'Failed to configure Scout JFrog.'
-
           }
 
 
           Write-Host 'Scout JFrog configured.'
-
 
 
       # ==========================================================
@@ -338,11 +251,9 @@ jobs:
       # ==========================================================
 
       - name: Verify Scout Connection
-
         shell: pwsh
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
 
@@ -351,113 +262,102 @@ jobs:
 
 
           if ($LASTEXITCODE -ne 0) {
-
               throw 'Scout JFrog connection failed.'
-
           }
 
 
           Write-Host 'Scout JFrog connection verified.'
 
 
-
       # ==========================================================
-      # 8. PARSE SOURCE AND TARGET URLS
+      # 8. PARSE SOURCE + TARGET
+      #
+      # EXAMPLE:
+      #
+      # Source URL:
+      # .../artifactory/source-repo/demo/
+      #
+      # Target URL:
+      # .../artifactory/target-repo/
+      #
+      # We calculate:
+      #
+      # sourceRoot:
+      # demo
+      #
+      # finalTarget:
+      # target-repo/demo
+      #
+      # copySourcePattern:
+      # source-repo/demo/(**)
+      #
+      # copyTargetPattern:
+      # target-repo/demo/{1}
+      #
       # ==========================================================
 
       - name: Parse Approved JFrog URLs
-
         id: paths
-
         shell: pwsh
 
         env:
-
           SOURCE_URL: ${{ steps.request.outputs.source_url }}
-
           TARGET_URL_INPUT: ${{ steps.request.outputs.target_url }}
-
           SCOUT_BASE_URL: ${{ secrets.TARGET_URL }}
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
 
-          # ------------------------------------------------------
-          # Parse supplied URLs.
-          # ------------------------------------------------------
-
           try {
-
               $sourceUri = [System.Uri]$env:SOURCE_URL
-
           }
           catch {
-
               throw 'Source URL is invalid.'
-
           }
 
 
           try {
-
               $targetUri = [System.Uri]$env:TARGET_URL_INPUT
-
           }
           catch {
-
               throw 'Target URL is invalid.'
-
           }
 
 
           try {
-
               $scoutUri = [System.Uri]$env:SCOUT_BASE_URL
-
           }
           catch {
-
               throw 'TARGET_URL secret is invalid.'
-
           }
 
 
           # ------------------------------------------------------
-          # HTTPS validation.
+          # HTTPS
           # ------------------------------------------------------
 
           if ($sourceUri.Scheme -ne 'https') {
-
               throw 'Source URL must use HTTPS.'
-
           }
 
 
           if ($targetUri.Scheme -ne 'https') {
-
               throw 'Target URL must use HTTPS.'
-
           }
 
 
           # ------------------------------------------------------
-          # Both locations must belong to the configured
-          # Scout JFrog host.
+          # SCOUT -> SCOUT ONLY
           # ------------------------------------------------------
 
           if ($sourceUri.Host -ne $scoutUri.Host) {
 
               Write-Host 'Source host:'
-
               Write-Host $sourceUri.Host
 
-
               Write-Host 'Configured Scout host:'
-
               Write-Host $scoutUri.Host
-
 
               throw 'Source URL does not belong to configured Scout JFrog.'
 
@@ -467,14 +367,10 @@ jobs:
           if ($targetUri.Host -ne $scoutUri.Host) {
 
               Write-Host 'Target host:'
-
               Write-Host $targetUri.Host
 
-
               Write-Host 'Configured Scout host:'
-
               Write-Host $scoutUri.Host
-
 
               throw 'Target URL does not belong to configured Scout JFrog.'
 
@@ -495,9 +391,7 @@ jobs:
 
 
           if ($sourcePosition -lt 0) {
-
               throw 'Source URL must contain /artifactory/.'
-
           }
 
 
@@ -512,21 +406,16 @@ jobs:
 
 
           $sourcePath = $sourcePath.Replace('\', '/')
-
           $sourcePath = $sourcePath.Trim('/')
 
 
           if (-not $sourcePath) {
-
               throw 'Unable to determine source Artifactory path.'
-
           }
 
 
           if ($sourcePath.Contains('..')) {
-
               throw 'Source path cannot contain ..'
-
           }
 
 
@@ -537,14 +426,14 @@ jobs:
 
 
           if ($sourceParts.Count -lt 2) {
-
               throw 'Source URL must point to a folder inside a repository.'
-
           }
 
 
-          # Last component of the selected source becomes
-          # the preserved destination root.
+          # ------------------------------------------------------
+          # ROOT FOLDER TO PRESERVE
+          # ------------------------------------------------------
+
           $sourceRoot = $sourceParts[
               $sourceParts.Count - 1
           ]
@@ -561,9 +450,7 @@ jobs:
 
 
           if ($targetPosition -lt 0) {
-
               throw 'Target URL must contain /artifactory/.'
-
           }
 
 
@@ -578,41 +465,37 @@ jobs:
 
 
           $targetBase = $targetBase.Replace('\', '/')
-
           $targetBase = $targetBase.Trim('/')
 
 
           if (-not $targetBase) {
-
               throw 'Unable to determine target Artifactory path.'
-
           }
 
 
           if ($targetBase.Contains('..')) {
-
               throw 'Target path cannot contain ..'
-
           }
 
 
           # ------------------------------------------------------
-          # BUILD FINAL TARGET
+          # FINAL TARGET ROOT
           #
-          # EXAMPLE
+          # Prevent demo/demo.
           #
-          # Source:
+          # If destination already ends in "demo":
           #
-          # source-repo/CW35
+          # target-repo/demo
           #
-          # Target input:
+          # leave it alone.
           #
-          # release-repo
+          # Otherwise:
           #
-          # Final:
+          # target-repo
           #
-          # release-repo/CW35
+          # becomes:
           #
+          # target-repo/demo
           # ------------------------------------------------------
 
           $targetParts = $targetBase.Split(
@@ -639,58 +522,68 @@ jobs:
 
 
           if ($sourcePath -eq $finalTarget) {
-
               throw 'Source and target paths cannot be identical.'
-
           }
 
 
-          # Exact source folder plus recursive contents.
-          $sourcePattern = "$sourcePath/*"
+          # ------------------------------------------------------
+          # IMPORTANT PATH-MAPPING FIX
+          #
+          # Capture everything BELOW sourceRoot.
+          #
+          # Example:
+          #
+          # source-repo/demo/(**)
+          #
+          # becomes:
+          #
+          # target-repo/demo/{1}
+          #
+          # This keeps nested paths while avoiding:
+          #
+          # target-repo/demo/demo/...
+          # ------------------------------------------------------
+
+          $copySourcePattern = "$sourcePath/(**)"
+
+          $copyTargetPattern = "$finalTarget/{1}"
+
+
+          # Search does not need capture syntax.
+          $sourceSearchPattern = "$sourcePath/*"
 
 
           Write-Host ''
-
           Write-Host '========================================'
-
           Write-Host 'SCOUT JFROG COPY PLAN'
-
           Write-Host '========================================'
 
 
           Write-Host 'Source folder:'
-
           Write-Host $sourcePath
 
 
-          Write-Host 'Source pattern:'
-
-          Write-Host $sourcePattern
-
-
-          Write-Host 'Preserved root folder:'
-
+          Write-Host 'Source root:'
           Write-Host $sourceRoot
 
 
-          Write-Host 'Requested target:'
-
-          Write-Host $targetBase
-
-
-          Write-Host 'Final target:'
-
+          Write-Host 'Destination root:'
           Write-Host $finalTarget
 
 
+          Write-Host 'Source search pattern:'
+          Write-Host $sourceSearchPattern
+
+
+          Write-Host 'Copy source pattern:'
+          Write-Host $copySourcePattern
+
+
+          Write-Host 'Copy target pattern:'
+          Write-Host $copyTargetPattern
+
+
           "source_path=$sourcePath" |
-              Out-File `
-                  -FilePath $env:GITHUB_OUTPUT `
-                  -Encoding utf8 `
-                  -Append
-
-
-          "source_pattern=$sourcePattern" |
               Out-File `
                   -FilePath $env:GITHUB_OUTPUT `
                   -Encoding utf8 `
@@ -704,6 +597,27 @@ jobs:
                   -Append
 
 
+          "source_search_pattern=$sourceSearchPattern" |
+              Out-File `
+                  -FilePath $env:GITHUB_OUTPUT `
+                  -Encoding utf8 `
+                  -Append
+
+
+          "copy_source_pattern=$copySourcePattern" |
+              Out-File `
+                  -FilePath $env:GITHUB_OUTPUT `
+                  -Encoding utf8 `
+                  -Append
+
+
+          "copy_target_pattern=$copyTargetPattern" |
+              Out-File `
+                  -FilePath $env:GITHUB_OUTPUT `
+                  -Encoding utf8 `
+                  -Append
+
+
           "final_target=$finalTarget" |
               Out-File `
                   -FilePath $env:GITHUB_OUTPUT `
@@ -711,31 +625,26 @@ jobs:
                   -Append
 
 
-
       # ==========================================================
-      # 9. VERIFY APPROVED SOURCE
+      # 9. VERIFY SOURCE
       # ==========================================================
 
       - name: Verify Approved Source
-
         shell: pwsh
 
         env:
-
-          SOURCE_PATTERN: ${{ steps.paths.outputs.source_pattern }}
+          SOURCE_SEARCH_PATTERN: ${{ steps.paths.outputs.source_search_pattern }}
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
 
-          Write-Host 'Verifying approved source:'
-
-          Write-Host $env:SOURCE_PATTERN
+          Write-Host 'Verifying source:'
+          Write-Host $env:SOURCE_SEARCH_PATTERN
 
 
           jf rt search `
-              "$env:SOURCE_PATTERN" `
+              "$env:SOURCE_SEARCH_PATTERN" `
               --server-id="$env:SCOUT_SERVER_ID" `
               --recursive=true `
               --include-dirs=false `
@@ -743,126 +652,112 @@ jobs:
 
 
           if ($LASTEXITCODE -ne 0) {
-
               throw 'No artifacts found under approved source.'
-
           }
 
 
           Write-Host 'Approved source verified.'
 
 
-
       # ==========================================================
-      # 10. PREVIEW DIRECT SCOUT COPY
+      # 10. DRY RUN
+      #
+      # The important mapping:
+      #
+      # source/demo/(**)
+      #      ↓
+      # target/demo/{1}
+      #
+      # flat=true is intentional because the relative hierarchy
+      # is being reconstructed explicitly using {1}.
       # ==========================================================
 
       - name: Preview Direct Scout Copy
-
         shell: pwsh
 
         env:
-
-          SOURCE_PATTERN: ${{ steps.paths.outputs.source_pattern }}
-
-          FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
+          COPY_SOURCE_PATTERN: ${{ steps.paths.outputs.copy_source_pattern }}
+          COPY_TARGET_PATTERN: ${{ steps.paths.outputs.copy_target_pattern }}
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
 
           Write-Host ''
-
-          Write-Host 'Direct Scout copy preview'
+          Write-Host '========================================'
+          Write-Host 'DRY RUN'
+          Write-Host '========================================'
 
 
           Write-Host 'FROM:'
-
-          Write-Host $env:SOURCE_PATTERN
+          Write-Host $env:COPY_SOURCE_PATTERN
 
 
           Write-Host 'TO:'
-
-          Write-Host "$env:FINAL_TARGET/"
+          Write-Host $env:COPY_TARGET_PATTERN
 
 
           jf rt copy `
-              "$env:SOURCE_PATTERN" `
-              "$env:FINAL_TARGET/" `
+              "$env:COPY_SOURCE_PATTERN" `
+              "$env:COPY_TARGET_PATTERN" `
               --server-id="$env:SCOUT_SERVER_ID" `
-              --recursive=true `
-              --flat=false `
+              --recursive=false `
+              --flat=true `
               --dry-run
 
 
           if ($LASTEXITCODE -ne 0) {
-
-              throw 'Scout copy preview failed.'
-
+              throw 'Scout copy dry run failed.'
           }
 
 
-          Write-Host 'Scout copy preview completed.'
-
+          Write-Host 'Dry run completed.'
 
 
       # ==========================================================
-      # 11. DIRECT SCOUT-TO-SCOUT COPY
+      # 11. DIRECT SCOUT -> SCOUT COPY
       # ==========================================================
 
       - name: Publish Approved Artifacts
-
         shell: pwsh
 
         env:
-
-          SOURCE_PATTERN: ${{ steps.paths.outputs.source_pattern }}
-
-          FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
+          COPY_SOURCE_PATTERN: ${{ steps.paths.outputs.copy_source_pattern }}
+          COPY_TARGET_PATTERN: ${{ steps.paths.outputs.copy_target_pattern }}
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
 
           Write-Host ''
-
           Write-Host '========================================'
-
           Write-Host 'STARTING APPROVED SCOUT COPY'
-
           Write-Host '========================================'
 
 
           Write-Host 'FROM:'
-
-          Write-Host $env:SOURCE_PATTERN
+          Write-Host $env:COPY_SOURCE_PATTERN
 
 
           Write-Host 'TO:'
-
-          Write-Host "$env:FINAL_TARGET/"
+          Write-Host $env:COPY_TARGET_PATTERN
 
 
           jf rt copy `
-              "$env:SOURCE_PATTERN" `
-              "$env:FINAL_TARGET/" `
+              "$env:COPY_SOURCE_PATTERN" `
+              "$env:COPY_TARGET_PATTERN" `
               --server-id="$env:SCOUT_SERVER_ID" `
-              --recursive=true `
-              --flat=false `
+              --recursive=false `
+              --flat=true `
               --fail-no-op=true
 
 
           if ($LASTEXITCODE -ne 0) {
-
               throw 'Approved Scout artifact copy failed.'
-
           }
 
 
           Write-Host 'Approved Scout artifact copy completed.'
-
 
 
       # ==========================================================
@@ -870,15 +765,12 @@ jobs:
       # ==========================================================
 
       - name: Verify Published Artifacts
-
         shell: pwsh
 
         env:
-
           FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
 
         run: |
-
           $ErrorActionPreference = 'Stop'
 
 
@@ -886,7 +778,6 @@ jobs:
 
 
           Write-Host 'Verifying destination:'
-
           Write-Host $targetPattern
 
 
@@ -899,99 +790,73 @@ jobs:
 
 
           if ($LASTEXITCODE -ne 0) {
-
               throw 'Published artifact verification failed.'
-
           }
 
 
-          Write-Host 'Published destination verified.'
-
+          Write-Host 'Published artifacts verified.'
 
 
       # ==========================================================
-      # 13. SUCCESS SUMMARY
+      # 13. SUMMARY
       # ==========================================================
 
       - name: Publish Summary
-
         if: success()
-
         shell: pwsh
 
         env:
-
           REQUEST_ID: ${{ steps.request.outputs.request_id }}
-
           SOURCE_URL: ${{ steps.request.outputs.source_url }}
-
           TARGET_URL_INPUT: ${{ steps.request.outputs.target_url }}
-
-          SOURCE_PATH: ${{ steps.paths.outputs.source_path }}
-
+          SOURCE_ROOT: ${{ steps.paths.outputs.source_root }}
           FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
 
         run: |
-
           Write-Host ''
-
           Write-Host '========================================'
-
           Write-Host 'SCOUT ARTIFACT PROMOTION SUCCESSFUL'
-
           Write-Host '========================================'
 
 
           Write-Host 'Request ID:'
-
           Write-Host $env:REQUEST_ID
 
 
           Write-Host 'Approved source URL:'
-
           Write-Host $env:SOURCE_URL
 
 
           Write-Host 'Approved target URL:'
-
           Write-Host $env:TARGET_URL_INPUT
 
 
-          Write-Host 'JFrog source path:'
+          Write-Host 'Preserved root folder:'
+          Write-Host $env:SOURCE_ROOT
 
-          Write-Host $env:SOURCE_PATH
 
-
-          Write-Host 'JFrog final target:'
-
+          Write-Host 'Final destination:'
           Write-Host $env:FINAL_TARGET
 
 
           Write-Host 'Approval status:'
-
           Write-Host 'APPROVED'
 
 
           Write-Host 'Publish status:'
-
           Write-Host 'SUCCESS'
 
 
-
       # ==========================================================
-      # 14. CLEANUP JFROG CONFIGURATION
+      # 14. CLEANUP
       # ==========================================================
 
       - name: Cleanup Scout Configuration
-
         if: always()
-
         shell: pwsh
-
         continue-on-error: true
 
         run: |
-
           jf c rm `
               "$env:SCOUT_SERVER_ID" `
               --quiet
