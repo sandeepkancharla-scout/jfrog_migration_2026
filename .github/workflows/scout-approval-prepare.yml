@@ -1,0 +1,320 @@
+name: Scout Artifact Approval Request
+
+run-name: Scout Approval - ${{ github.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+
+      source_url:
+        description: "Full Scout JFrog source URL"
+        required: true
+        type: string
+
+      target_url:
+        description: "Full Scout JFrog target URL"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+
+  prepare:
+
+    name: Prepare Scout Approval
+
+    runs-on:
+      - self-hosted
+      - Windows
+
+    steps:
+
+      # ==========================================================
+      # 1. VALIDATE INPUTS
+      # ==========================================================
+
+      - name: Validate Inputs
+        shell: pwsh
+
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+          TARGET_URL_INPUT: ${{ inputs.target_url }}
+
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (-not $env:SOURCE_URL) {
+              throw 'Source URL is missing.'
+          }
+
+          if (-not $env:TARGET_URL_INPUT) {
+              throw 'Target URL is missing.'
+          }
+
+          try {
+              $sourceUri = [System.Uri]$env:SOURCE_URL
+          }
+          catch {
+              throw 'Source URL is invalid.'
+          }
+
+          try {
+              $targetUri = [System.Uri]$env:TARGET_URL_INPUT
+          }
+          catch {
+              throw 'Target URL is invalid.'
+          }
+
+          if ($sourceUri.Scheme -ne 'https') {
+              throw 'Source URL must use HTTPS.'
+          }
+
+          if ($targetUri.Scheme -ne 'https') {
+              throw 'Target URL must use HTTPS.'
+          }
+
+          Write-Host 'Approval request inputs are valid.'
+
+
+      # ==========================================================
+      # 2. CREATE REQUEST ID
+      # ==========================================================
+
+      - name: Create Request ID
+        id: request
+        shell: pwsh
+
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $requestId = 'SCOUT-${{ github.run_id }}'
+
+          Write-Host 'Request ID:'
+          Write-Host $requestId
+
+          "request_id=$requestId" |
+            Out-File `
+              -FilePath $env:GITHUB_OUTPUT `
+              -Encoding utf8 `
+              -Append
+
+
+      # ==========================================================
+      # 3. VALIDATE TEAMS WEBHOOK
+      # ==========================================================
+
+      - name: Validate Teams Webhook
+        shell: pwsh
+
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (-not $env:TEAMS_WEBHOOK_URL) {
+              throw 'TEAMS_WEBHOOK_URL secret is missing.'
+          }
+
+          Write-Host 'Teams webhook is available.'
+
+
+      # ==========================================================
+      # 4. SEND APPROVAL REQUEST TO TEAMS / POWER AUTOMATE
+      # ==========================================================
+
+      - name: Send Scout Approval Request
+        shell: pwsh
+
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+
+          SOURCE_URL: ${{ inputs.source_url }}
+          TARGET_URL_INPUT: ${{ inputs.target_url }}
+
+          REQUEST_ID: ${{ steps.request.outputs.request_id }}
+
+          REQUESTED_BY: ${{ github.actor }}
+          REPOSITORY_NAME: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $payload = @{
+
+              type = 'message'
+
+              request_id = $env:REQUEST_ID
+
+              source_url = $env:SOURCE_URL
+
+              target_url = $env:TARGET_URL_INPUT
+
+              requested_by = $env:REQUESTED_BY
+
+              repository = $env:REPOSITORY_NAME
+
+              run_id = $env:RUN_ID
+
+              attachments = @(
+
+                  @{
+
+                      contentType = 'application/vnd.microsoft.card.adaptive'
+
+                      content = @{
+
+                          '$schema' = 'http://adaptivecards.io/schemas/adaptive-card.json'
+
+                          type = 'AdaptiveCard'
+
+                          version = '1.2'
+
+                          body = @(
+
+                              @{
+
+                                  type = 'TextBlock'
+
+                                  text = 'Scout JFrog Artifact Promotion'
+
+                                  size = 'Large'
+
+                                  weight = 'Bolder'
+
+                                  color = 'Accent'
+
+                              }
+
+                              @{
+
+                                  type = 'TextBlock'
+
+                                  text = 'Artifact promotion approval is required.'
+
+                                  wrap = $true
+
+                              }
+
+                              @{
+
+                                  type = 'FactSet'
+
+                                  facts = @(
+
+                                      @{
+
+                                          title = 'Request ID'
+
+                                          value = $env:REQUEST_ID
+
+                                      }
+
+                                      @{
+
+                                          title = 'Requested By'
+
+                                          value = $env:REQUESTED_BY
+
+                                      }
+
+                                      @{
+
+                                          title = 'Source'
+
+                                          value = $env:SOURCE_URL
+
+                                      }
+
+                                      @{
+
+                                          title = 'Target'
+
+                                          value = $env:TARGET_URL_INPUT
+
+                                      }
+
+                                      @{
+
+                                          title = 'Repository'
+
+                                          value = $env:REPOSITORY_NAME
+
+                                      }
+
+                                  )
+
+                              }
+
+                          )
+
+                      }
+
+                  }
+
+              )
+
+          }
+
+
+          $json = $payload |
+            ConvertTo-Json -Depth 30
+
+
+          Write-Host 'Sending Scout approval request to Teams.'
+
+
+          try {
+
+              Invoke-RestMethod `
+                -Uri $env:TEAMS_WEBHOOK_URL `
+                -Method Post `
+                -ContentType 'application/json' `
+                -Body $json `
+                -ErrorAction Stop
+
+          }
+          catch {
+
+              Write-Host 'Teams approval webhook failed.'
+
+              Write-Host $_.Exception.Message
+
+              throw
+
+          }
+
+
+          Write-Host 'Scout approval request submitted successfully.'
+
+
+      # ==========================================================
+      # 5. SUMMARY
+      # ==========================================================
+
+      - name: Approval Request Summary
+        shell: pwsh
+
+        env:
+          REQUEST_ID: ${{ steps.request.outputs.request_id }}
+          SOURCE_URL: ${{ inputs.source_url }}
+          TARGET_URL_INPUT: ${{ inputs.target_url }}
+
+        run: |
+          Write-Host 'Approval request submitted.'
+
+          Write-Host 'Request ID:'
+          Write-Host $env:REQUEST_ID
+
+          Write-Host 'Source:'
+          Write-Host $env:SOURCE_URL
+
+          Write-Host 'Target:'
+          Write-Host $env:TARGET_URL_INPUT
+
+          Write-Host 'This GitHub workflow is complete.'
+
+          Write-Host 'Artifact publication will run separately after approval.'
