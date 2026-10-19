@@ -3,11 +3,12 @@ name: Scout Approval Publish
 run-name: Scout Approved Artifact Publish
 
 on:
-  # This unfiltered trigger is the version that is currently
-  # working with the Power Automate repository dispatch.
+  # Keep unfiltered because this repository_dispatch
+  # configuration is currently working with Power Automate.
   repository_dispatch:
 
-  # Keep manual execution available for troubleshooting.
+  # Manual execution remains available for troubleshooting
+  # without repeating the Teams approval process.
   workflow_dispatch:
     inputs:
       source_url:
@@ -51,6 +52,7 @@ jobs:
       - name: Resolve Approval Inputs
         id: request
         shell: pwsh
+
         env:
           EVENT_NAME: ${{ github.event_name }}
 
@@ -90,7 +92,7 @@ jobs:
           $sourceUrl = $sourceUrl.Trim()
           $targetUrl = $targetUrl.Trim()
 
-          # GitHub owns the tracking ID.
+          # Generate internal request ID in GitHub.
           $requestId = "SCOUT-${{ github.run_id }}"
 
           Write-Host ''
@@ -131,6 +133,7 @@ jobs:
 
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v4
+
         with:
           disable-auto-build-publish: true
 
@@ -145,6 +148,7 @@ jobs:
 
       - name: Verify JFrog CLI
         shell: pwsh
+
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -161,6 +165,7 @@ jobs:
 
       - name: Validate Scout Secrets
         shell: pwsh
+
         env:
           SCOUT_URL: ${{ secrets.TARGET_URL }}
           SCOUT_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
@@ -180,12 +185,13 @@ jobs:
 
 
       # ==========================================================
-      # 5. REMOVE OLD JFROG CONFIG
+      # 5. CLEAN EXISTING CONFIG
       # ==========================================================
 
       - name: Cleanup Existing JFrog Configuration
         shell: pwsh
         continue-on-error: true
+
         run: |
           jf c rm "$env:SCOUT_SERVER_ID" --quiet
 
@@ -196,6 +202,7 @@ jobs:
 
       - name: Configure Scout JFrog
         shell: pwsh
+
         env:
           SCOUT_URL: ${{ secrets.TARGET_URL }}
           SCOUT_TOKEN: ${{ secrets.TARGET_ACCESS_TOKEN }}
@@ -222,6 +229,7 @@ jobs:
 
       - name: Verify Scout Connection
         shell: pwsh
+
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -236,12 +244,13 @@ jobs:
 
 
       # ==========================================================
-      # 8. PARSE JFROG URLS
+      # 8. PARSE APPROVED JFROG URLS
       # ==========================================================
 
       - name: Parse Approved JFrog URLs
         id: paths
         shell: pwsh
+
         env:
           SOURCE_URL: ${{ steps.request.outputs.source_url }}
           TARGET_URL_INPUT: ${{ steps.request.outputs.target_url }}
@@ -290,7 +299,7 @@ jobs:
           $marker = '/artifactory/'
 
           # ------------------------------------------------------
-          # Source
+          # SOURCE
           # ------------------------------------------------------
 
           $sourcePosition = $sourceUri.AbsolutePath.IndexOf(
@@ -327,7 +336,7 @@ jobs:
           )
 
           if ($sourceParts.Count -lt 2) {
-              throw 'Source URL must point to a folder inside a repository.'
+              throw 'Source URL must point inside a repository.'
           }
 
           $sourceRepository = $sourceParts[0]
@@ -345,7 +354,7 @@ jobs:
           ]
 
           # ------------------------------------------------------
-          # Target
+          # TARGET
           # ------------------------------------------------------
 
           $targetPosition = $targetUri.AbsolutePath.IndexOf(
@@ -377,15 +386,15 @@ jobs:
           }
 
           # ------------------------------------------------------
-          # Preserve source root folder at destination
+          # PRESERVE SOURCE ROOT FOLDER
           #
           # Source:
-          # repo/CW35
+          # source-repo/CW35
           #
           # Target:
           # release-repo
           #
-          # Final:
+          # Result:
           # release-repo/CW35
           # ------------------------------------------------------
 
@@ -424,6 +433,9 @@ jobs:
           Write-Host 'Source root:'
           Write-Host $sourceRoot
 
+          Write-Host 'Source search pattern:'
+          Write-Host $sourceSearchPattern
+
           Write-Host 'Target base:'
           Write-Host $targetBase
 
@@ -456,11 +468,12 @@ jobs:
 
 
       # ==========================================================
-      # 9. VERIFY SOURCE
+      # 9. VERIFY APPROVED SOURCE
       # ==========================================================
 
       - name: Verify Approved Source
         shell: pwsh
+
         env:
           SOURCE_PATTERN: ${{ steps.paths.outputs.source_search_pattern }}
 
@@ -481,6 +494,8 @@ jobs:
               throw 'No artifacts found under the approved source.'
           }
 
+          Write-Host 'Approved source contains artifacts.'
+
 
       # ==========================================================
       # 10. PREPARE LOCAL STAGING
@@ -489,6 +504,7 @@ jobs:
       - name: Prepare Local Staging
         id: staging
         shell: pwsh
+
         env:
           REQUEST_ID: ${{ steps.request.outputs.request_id }}
 
@@ -514,7 +530,7 @@ jobs:
               -Force |
               Out-Null
 
-          Write-Host 'Temporary staging:'
+          Write-Host 'Temporary staging directory:'
           Write-Host $requestTemp
 
           "request_temp=$requestTemp" |
@@ -526,10 +542,18 @@ jobs:
 
       # ==========================================================
       # 11. DOWNLOAD APPROVED ARTIFACTS
+      #
+      # IMPORTANT:
+      # threads=1     -> one artifact transfer worker
+      # split-count=0 -> disables multipart downloading
+      #
+      # This is intentional for the current Windows runner
+      # download troubleshooting.
       # ==========================================================
 
       - name: Download Approved Artifacts
         shell: pwsh
+
         env:
           SOURCE_PATTERN: ${{ steps.paths.outputs.source_search_pattern }}
           REQUEST_TEMP: ${{ steps.staging.outputs.request_temp }}
@@ -537,6 +561,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
+          Write-Host ''
           Write-Host 'Downloading approved artifacts.'
 
           Write-Host 'FROM:'
@@ -544,6 +569,9 @@ jobs:
 
           Write-Host 'TO LOCAL:'
           Write-Host $env:REQUEST_TEMP
+
+          Write-Host 'Download mode:'
+          Write-Host 'Single thread / multipart disabled'
 
           jf rt download `
               "$env:SOURCE_PATTERN" `
@@ -553,22 +581,26 @@ jobs:
               --flat=false `
               --include-dirs=true `
               --fail-no-op=true `
-              --threads=4 `
-              --retries=3 `
-              --retry-wait-time=5s
+              --threads=1 `
+              --split-count=0 `
+              --retries=2 `
+              --retry-wait-time=10s
 
           if ($LASTEXITCODE -ne 0) {
               throw 'Artifact download failed.'
           }
 
+          Write-Host 'Artifact download completed.'
+
 
       # ==========================================================
-      # 12. LOCATE LOCAL SOURCE
+      # 12. LOCATE DOWNLOADED SOURCE
       # ==========================================================
 
       - name: Locate Local Source
         id: local
         shell: pwsh
+
         env:
           REQUEST_TEMP: ${{ steps.staging.outputs.request_temp }}
           SOURCE_REPOSITORY: ${{ steps.paths.outputs.source_repository }}
@@ -609,7 +641,7 @@ jobs:
           }
           else {
 
-              Write-Host 'Downloaded structure:'
+              Write-Host 'Downloaded directory structure:'
 
               Get-ChildItem `
                   -LiteralPath $env:REQUEST_TEMP `
@@ -636,7 +668,7 @@ jobs:
           Write-Host 'Local upload source:'
           Write-Host $localSource
 
-          Write-Host 'Downloaded files:'
+          Write-Host 'Downloaded file count:'
           Write-Host $files.Count
 
           "local_source=$localSource" |
@@ -658,6 +690,7 @@ jobs:
 
       - name: Show Local Structure
         shell: pwsh
+
         env:
           LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
 
@@ -684,11 +717,12 @@ jobs:
 
 
       # ==========================================================
-      # 14. PREVIEW UPLOAD
+      # 14. PREVIEW APPROVED UPLOAD
       # ==========================================================
 
       - name: Preview Approved Upload
         shell: pwsh
+
         env:
           LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
           FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
@@ -696,6 +730,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
+          Write-Host ''
           Write-Host 'Upload preview'
 
           Write-Host 'FROM LOCAL:'
@@ -729,11 +764,12 @@ jobs:
 
 
       # ==========================================================
-      # 15. PUBLISH ARTIFACTS
+      # 15. PUBLISH APPROVED ARTIFACTS
       # ==========================================================
 
       - name: Publish Approved Artifacts
         shell: pwsh
+
         env:
           LOCAL_SOURCE: ${{ steps.local.outputs.local_source }}
           FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
@@ -741,9 +777,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
+          Write-Host ''
           Write-Host 'Publishing approved artifacts.'
 
-          Write-Host 'TARGET:'
+          Write-Host 'FROM LOCAL:'
+          Write-Host $env:LOCAL_SOURCE
+
+          Write-Host 'TO:'
           Write-Host $env:FINAL_TARGET
 
           Push-Location $env:LOCAL_SOURCE
@@ -772,13 +812,16 @@ jobs:
 
           }
 
+          Write-Host 'Approved artifact publication completed.'
+
 
       # ==========================================================
-      # 16. VERIFY TARGET
+      # 16. VERIFY PUBLISHED ARTIFACTS
       # ==========================================================
 
       - name: Verify Published Artifacts
         shell: pwsh
+
         env:
           FINAL_TARGET: ${{ steps.paths.outputs.final_target }}
 
@@ -787,7 +830,7 @@ jobs:
 
           $targetPattern = "$env:FINAL_TARGET/*"
 
-          Write-Host 'Verifying target:'
+          Write-Host 'Verifying destination:'
           Write-Host $targetPattern
 
           jf rt search `
@@ -811,6 +854,7 @@ jobs:
       - name: Publish Summary
         if: success()
         shell: pwsh
+
         env:
           REQUEST_ID: ${{ steps.request.outputs.request_id }}
           SOURCE_URL: ${{ steps.request.outputs.source_url }}
@@ -854,6 +898,7 @@ jobs:
         if: always()
         shell: pwsh
         continue-on-error: true
+
         env:
           REQUEST_TEMP: ${{ steps.staging.outputs.request_temp }}
 
@@ -872,4 +917,4 @@ jobs:
 
           jf c rm "$env:SCOUT_SERVER_ID" --quiet
 
-          Write-Host 'Local staging and JFrog configuration cleaned.'
+          Write-Host 'Local staging and Scout JFrog configuration cleaned.'
