@@ -1,0 +1,34 @@
+name: Scout Approval Publish
+
+run-name: Scout Publish After Approval
+
+on:
+  repository_dispatch:
+    types:
+      - scout-artifact-approved
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+
+    name: Approved Scout Publish
+
+    runs-on:
+      - self-hosted
+      - Windows
+
+    steps:
+
+      - name: Show Approval Result
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host 'Scout artifact promotion approved.'
+          Write-Host 'All required Teams approvers approved.'
+          Write-Host 'GitHub publish workflow triggered successfully.'
+
+          Write-Host 'Event type:'
+          Write-Host '${{ github.event.action }}'
