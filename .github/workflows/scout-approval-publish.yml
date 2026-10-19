@@ -28,7 +28,10 @@ jobs:
 
           Write-Host 'Scout artifact promotion approved.'
           Write-Host 'All required Teams approvers approved.'
-          Write-Host 'GitHub publish workflow triggered successfully.'
+
+          Write-Host 'Repository dispatch received.'
 
           Write-Host 'Event type:'
           Write-Host '${{ github.event.action }}'
+
+          Write-Host 'GitHub publish workflow triggered successfully.'
