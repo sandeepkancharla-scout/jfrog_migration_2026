@@ -2,8 +2,6 @@ name: Scout Approval Publish
 
 on:
   repository_dispatch:
-    types:
-      - scout-artifact-approved
 
   workflow_dispatch:
 
@@ -11,6 +9,7 @@ permissions:
   contents: read
 
 jobs:
+
   publish:
 
     name: Approved Scout Publish
@@ -28,16 +27,13 @@ jobs:
 
           Write-Host 'Scout Approval Publish started.'
 
-          Write-Host 'GitHub event:'
+          Write-Host 'Event name:'
           Write-Host '${{ github.event_name }}'
 
-          Write-Host 'Repository dispatch action:'
+          Write-Host 'Repository dispatch event type:'
           Write-Host '${{ github.event.action }}'
 
           Write-Host 'Repository:'
           Write-Host '${{ github.repository }}'
 
-          Write-Host 'Branch:'
-          Write-Host '${{ github.ref_name }}'
-
-          Write-Host 'Publish trigger test successful.'
+          Write-Host 'Default branch listener test completed.'
